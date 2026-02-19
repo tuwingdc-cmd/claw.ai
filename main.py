@@ -152,59 +152,60 @@ async def on_message(message: discord.Message):
     if not should_respond:
         return
 
-    # Clean content
+            # Clean content
     content = message.content.replace(f"<@{bot.user.id}>", "").strip()
     if not content:
         content = "Hello!"
 
     async with message.channel.typing():
-            from core.handler import handle_message
-            # Inject guild_id ke settings supaya log bisa track
-            settings["guild_id"] = message.guild.id
-            result = await handle_message(content, settings)
-        # result = { "text": "...", "fallback_note": "..." or None }
-        response_text = result["text"]
-        fallback_note = result.get("fallback_note")
+        from core.handler import handle_message
+        settings["guild_id"] = message.guild.id
+        result = await handle_message(content, settings)
 
-        # Append fallback notice if any (plaintext, small)
-        if fallback_note:
-            response_text += f"\n\n-# {fallback_note}"
+    response_text = result["text"]
+    fallback_note = result.get("fallback_note")
 
-        # Split if too long (plaintext, no embed)
-        if len(response_text) > 2000:
-            chunks = _split_message(response_text)
-            for chunk in chunks:
-                await message.reply(chunk, mention_author=False)
-        else:
-            await message.reply(response_text, mention_author=False)
+    if fallback_note:
+        response_text += f"\n\n-# {fallback_note}"
+
+    if len(response_text) > 2000:
+        chunks = _split_message(response_text)
+        for chunk in chunks:
+            await message.reply(chunk, mention_author=False)
+    else:
+        await message.reply(response_text, mention_author=False)
 
 # ============================================================
 # COMMANDS
 # ============================================================
-
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
     """Show commands"""
     p = DISCORD_PREFIX
     embed = discord.Embed(
-        title="🤖 AI Bot",
+        title="🤖 AI Bot Commands",
         color=discord.Color.blue(),
         description=(
-            f"**Commands:**\n"
-            f"`{p}set` — Konfigurasi mode, provider, dan model\n"
+            f"**AI Settings:**\n"
+            f"`{p}set` — Konfigurasi mode, provider, model\n"
             f"`{p}toggle` — Toggle auto-chat ON/OFF\n"
-            f"`{p}channel` — Enable/disable channel untuk auto-chat\n"
+            f"`{p}channel` — Enable/disable auto-chat channel\n"
             f"`{p}status` — Lihat konfigurasi saat ini\n"
             f"`{p}monitor` — Health dashboard provider\n"
-            f"`{p}log [n]` — Lihat n request log terakhir\n"
+            f"`{p}log [n]` — Lihat request log\n"
             f"`{p}reset` — Reset ke default\n\n"
+            f"**Skills:**\n"
+            f"`{p}time [timezone]` — Cek waktu sekarang\n"
+            f"`{p}alarm <menit> <pesan>` — Set alarm\n"
+            f"`{p}alarms` — Lihat alarm aktif\n"
+            f"`{p}calendar [bulan] [tahun]` — Tampilkan kalender\n"
+            f"`{p}countdown <YYYY-MM-DD>` — Hitung mundur\n"
+            f"`{p}weather <kota>` — Cek cuaca\n\n"
             f"**Chat:**\n"
-            f"Mention <@{bot.user.id}> untuk chat\n"
-            f"Atau aktifkan auto-chat di channel tertentu"
+            f"Mention {ctx.bot.user.mention} untuk chat dengan AI"
         )
     )
     await ctx.send(embed=embed)
-
 # ============================================================
 # !SET — ALL-IN-ONE SETTINGS
 # ============================================================
@@ -401,6 +402,128 @@ def _split_message(text: str, limit: int = 2000) -> list:
         text = text[sp:].lstrip()
     return chunks
 
+# ============================================================
+# SKILL COMMANDS
+# ============================================================
+
+from skills import (
+    get_current_time, get_time_difference,
+    set_alarm, list_alarms, cancel_alarm,
+    get_calendar, days_until,
+    get_weather
+)
+
+@bot.command(name="time", aliases=["waktu", "jam"])
+async def time_cmd(ctx: commands.Context, timezone: str = "Asia/Jakarta"):
+    """Cek waktu sekarang"""
+    result = get_current_time(timezone)
+    if result["success"]:
+        embed = discord.Embed(
+            title="🕐 Waktu Sekarang",
+            description=f"**{result['full']}**",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Jam", value=result['time'], inline=True)
+        embed.add_field(name="Tanggal", value=result['date'], inline=True)
+        embed.add_field(name="Hari", value=result['day'], inline=True)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send(f"❌ Error: {result['error']}\n💡 Timezone valid: `Asia/Jakarta`, `America/New_York`, `Europe/London`")
+
+@bot.command(name="alarm")
+async def alarm_cmd(ctx: commands.Context, minutes: int, *, message: str = "⏰ Alarm!"):
+    """Set alarm: !alarm 5 Waktunya meeting"""
+    
+    if minutes < 1 or minutes > 1440:  # Max 24 jam
+        await ctx.send("❌ Alarm hanya bisa 1-1440 menit (1 menit - 24 jam)")
+        return
+    
+    async def alarm_callback(alarm_data):
+        user = ctx.guild.get_member(alarm_data["user_id"])
+        if user:
+            try:
+                await ctx.channel.send(f"⏰ {user.mention} **ALARM:** {alarm_data['message']}")
+            except:
+                pass
+    
+    result = await set_alarm(
+        ctx.guild.id, 
+        ctx.author.id, 
+        minutes, 
+        message, 
+        alarm_callback
+    )
+    
+    if result["success"]:
+        await ctx.send(
+            f"⏰ Alarm diset untuk **{minutes} menit** lagi (trigger: {result['trigger_time']})\n"
+            f"📝 Pesan: {message}"
+        )
+
+@bot.command(name="alarms", aliases=["myalarms"])
+async def alarms_cmd(ctx: commands.Context):
+    """Lihat alarm aktif kamu"""
+    active = list_alarms(ctx.guild.id, ctx.author.id)
+    if not active:
+        await ctx.send("📭 Kamu tidak punya alarm aktif.")
+        return
+    
+    lines = ["**⏰ Alarm Aktif:**\n"]
+    for i, alarm in enumerate(active, 1):
+        trigger = alarm['trigger_time'].strftime("%H:%M:%S")
+        remaining = (alarm['trigger_time'] - datetime.now()).total_seconds() / 60
+        lines.append(f"{i}. `{trigger}` (~{int(remaining)} menit lagi) - {alarm['message']}")
+    
+    await ctx.send("\n".join(lines))
+
+@bot.command(name="calendar", aliases=["kalender", "cal"])
+async def calendar_cmd(ctx: commands.Context, month: int = None, year: int = None):
+    """Tampilkan kalender: !calendar atau !calendar 12 2026"""
+    result = get_calendar(year, month)
+    if result["success"]:
+        embed = discord.Embed(
+            title=f"📅 {result['month_name']} {result['year']}",
+            description=result["calendar_text"],
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"{result['days_in_month']} hari")
+        await ctx.send(embed=embed)
+
+@bot.command(name="countdown", aliases=["hitung"])
+async def countdown_cmd(ctx: commands.Context, target_date: str):
+    """Hitung mundur ke tanggal: !countdown 2026-12-31"""
+    result = days_until(target_date)
+    if result["success"]:
+        if result["is_today"]:
+            msg = f"🎉 **Hari ini adalah {target_date}!**"
+        elif result["is_past"]:
+            msg = f"📅 {target_date} sudah lewat **{abs(result['days_remaining'])} hari** yang lalu"
+        else:
+            msg = f"⏳ Tinggal **{result['days_remaining']} hari** lagi menuju {target_date}"
+        
+        await ctx.send(msg)
+    else:
+        await ctx.send(f"❌ {result['error']}")
+
+@bot.command(name="weather", aliases=["cuaca"])
+async def weather_cmd(ctx: commands.Context, *, city: str = "Jakarta"):
+    """Cek cuaca: !weather Tokyo"""
+    async with ctx.typing():
+        result = await get_weather(city)
+    
+    if result["success"]:
+        embed = discord.Embed(
+            title=f"🌤️ Cuaca di {result['city']}",
+            description=f"**{result['description']}**",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="🌡️ Suhu", value=f"{result['temp']}°C", inline=True)
+        embed.add_field(name="💨 Terasa", value=f"{result['feels_like']}°C", inline=True)
+        embed.add_field(name="💧 Kelembapan", value=f"{result['humidity']}%", inline=True)
+        embed.add_field(name="🌬️ Angin", value=f"{result['wind_speed']} km/h", inline=True)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send(f"❌ {result['error']}")
 # ============================================================
 # RUN
 # ============================================================

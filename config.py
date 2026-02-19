@@ -97,10 +97,10 @@ PROVIDERS: Dict[str, Provider] = {
             # Preview
             Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick", ["reasoning"], 131072, vision=True),
             Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["reasoning"], 131072, vision=True),
-            Model("qwen-qwq-32b", "Qwen QWQ 32B", ["reasoning"], 32768),
+            Model("qwen/qwen3-32b", "Qwen QWQ 32B", ["reasoning"], 32768),
             Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill", ["reasoning"], 32768),
             Model("moonshotai/kimi-k2-instruct-0905", "Kimi K2", ["normal"], 131072),
-            Model("qwen/qwen-3-32b", "Qwen 3 32B", ["normal"], 32768),
+            Model("qwen/qwen3-32b", "Qwen 3 32B", ["normal"], 32768),
             # Audio
             Model("whisper-large-v3", "Whisper V3", ["audio"]),
             Model("whisper-large-v3-turbo", "Whisper V3 Turbo", ["audio"]),
@@ -339,7 +339,7 @@ FALLBACK_CHAINS = {
     ],
     "reasoning": [
         ("groq", "deepseek-r1-distill-llama-70b"),
-        ("groq", "qwen-qwq-32b"),
+        ("groq", "qwen/qwen3-32b"),
         ("groq", "openai/gpt-oss-120b"),
         ("openrouter", "deepseek/deepseek-r1:free"),
         ("openrouter", "deepseek/deepseek-r1-0528:free"),
