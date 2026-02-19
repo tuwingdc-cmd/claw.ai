@@ -1,13 +1,14 @@
 """
-from datetime import datetime
 Discord AI Bot - Entry Point
 Multi-provider AI with fallback system
+Settings persist via SQLite!
 """
 
 import discord
 from discord.ext import commands
 import asyncio
 import logging
+from datetime import datetime
 from config import (
     DISCORD_TOKEN,
     DISCORD_PREFIX,
@@ -15,6 +16,7 @@ from config import (
     PROVIDERS,
     list_available_providers
 )
+from core.database import init_db, SettingsManager, DEFAULT_SETTINGS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +24,13 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger(__name__)
+
+# ============================================================
+# INIT DATABASE
+# ============================================================
+
+init_db()
+log.info("SQLite database ready!")
 
 # ============================================================
 # BOT SETUP
@@ -71,37 +80,50 @@ MODE_ICONS = {
 }
 
 # ============================================================
-# IN-MEMORY SETTINGS (replaced by DB later)
+# MONTH ALIASES (for calendar command)
 # ============================================================
 
-guild_settings = {}
+MONTH_ALIASES = {
+    "januari": 1, "january": 1, "jan": 1,
+    "februari": 2, "february": 2, "feb": 2,
+    "maret": 3, "march": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "mei": 5, "may": 5,
+    "juni": 6, "june": 6, "jun": 6,
+    "juli": 7, "july": 7, "jul": 7,
+    "agustus": 8, "august": 8, "aug": 8,
+    "september": 9, "sep": 9, "sept": 9,
+    "oktober": 10, "october": 10, "oct": 10, "okt": 10,
+    "november": 11, "nov": 11, "nop": 11,
+    "desember": 12, "december": 12, "dec": 12, "des": 12,
+}
+
+def parse_month(value: str) -> int:
+    """Parse month from string (number or name)"""
+    if value is None:
+        return None
+    value = value.lower().strip()
+    # Try as number first
+    try:
+        m = int(value)
+        if 1 <= m <= 12:
+            return m
+    except ValueError:
+        pass
+    # Try as name
+    return MONTH_ALIASES.get(value)
+
+# ============================================================
+# SETTINGS HELPER (wraps SettingsManager)
+# ============================================================
 
 def get_settings(guild_id: int) -> dict:
-    """Get or create guild settings with mode profiles"""
-    if guild_id not in guild_settings:
-        guild_settings[guild_id] = {
-            # Mode profiles — each mode has its own provider+model
-            "profiles": {
-                "normal": {
-                    "provider": "groq",
-                    "model": "llama-3.3-70b-versatile",
-                },
-                "reasoning": {
-                    "provider": "groq",
-                    "model": "deepseek-r1-distill-llama-70b",
-                },
-                "search": {
-                    "provider": "groq",
-                    "model": "llama-3.3-70b-versatile",
-                    "engine": "duckduckgo",
-                },
-            },
-            "active_mode": "normal",
-            "auto_chat": False,
-            "auto_detect": False,
-            "enabled_channels": [],
-        }
-    return guild_settings[guild_id]
+    """Get guild settings from DB cache"""
+    return SettingsManager.get(guild_id)
+
+def save_settings(guild_id: int):
+    """Save current settings to DB"""
+    SettingsManager.save(guild_id)
 
 def get_active_profile(guild_id: int) -> dict:
     """Get current active mode profile"""
@@ -118,12 +140,36 @@ async def on_ready():
     log.info(f"Bot ready: {bot.user.name} ({bot.user.id})")
     log.info(f"Servers: {len(bot.guilds)}")
     log.info(f"Providers: {list_available_providers()}")
+    
+    # === DATABASE STATUS ===
+    import os
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.db")
+    if os.path.exists(db_path):
+        db_size = os.path.getsize(db_path)
+        saved_guilds = SettingsManager.get_all_guilds()
+        log.info(f"DATABASE: CONNECTED | {db_path} | {db_size} bytes | {len(saved_guilds)} saved guilds")
+    else:
+        log.warning(f"DATABASE: NOT FOUND | {db_path}")
+    
+    # Load settings for all connected guilds
+    for guild in bot.guilds:
+        settings = get_settings(guild.id)
+        mode = settings["active_mode"]
+        auto = settings["auto_chat"]
+        channels = len(settings["enabled_channels"])
+        log.info(f"  Guild '{guild.name}' | mode: {mode} | auto_chat: {auto} | channels: {channels}")
+    
+    log.info("=" * 50)
+    log.info("BOT FULLY READY - ALL SYSTEMS GO")
+    log.info("=" * 50)
+    
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.listening,
             name=f"{DISCORD_PREFIX}help"
         )
     )
+
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -153,7 +199,7 @@ async def on_message(message: discord.Message):
     if not should_respond:
         return
 
-            # Clean content
+    # Clean content
     content = message.content.replace(f"<@{bot.user.id}>", "").strip()
     if not content:
         content = "Hello!"
@@ -177,8 +223,28 @@ async def on_message(message: discord.Message):
         await message.reply(response_text, mention_author=False)
 
 # ============================================================
+# HELPERS
+# ============================================================
+
+def _split_message(text: str, limit: int = 2000) -> list:
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        sp = text.rfind('\n', 0, limit)
+        if sp == -1 or sp < limit // 2:
+            sp = limit
+        chunks.append(text[:sp])
+        text = text[sp:].lstrip()
+    return chunks
+
+# ============================================================
 # COMMANDS
 # ============================================================
+
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
     """Show commands"""
@@ -202,13 +268,18 @@ async def help_cmd(ctx: commands.Context):
             f"`{p}calendar [bulan] [tahun]` — Tampilkan kalender\n"
             f"`{p}countdown <YYYY-MM-DD>` — Hitung mundur\n"
             f"`{p}weather <kota>` — Cek cuaca\n\n"
+            f"**Memory:**\n"
+            f"`{p}memory` — Lihat status memory\n"
+            f"`{p}clear` — Hapus memory channel\n"
+            f"`{p}clear all` — Hapus semua memory server\n\n"
             f"**Chat:**\n"
             f"Mention {ctx.bot.user.mention} untuk chat dengan AI"
         )
     )
     await ctx.send(embed=embed)
+
 # ============================================================
-# !SET — ALL-IN-ONE SETTINGS
+# !SET — ALL-IN-ONE SETTINGS (auto-save to DB)
 # ============================================================
 
 @bot.command(name="set")
@@ -221,11 +292,10 @@ async def set_cmd(ctx: commands.Context):
     embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
 
     async def on_update(interaction: discord.Interaction, key: str, value):
-        """Callback when setting changes"""
+        """Callback when setting changes — auto-saves to DB!"""
         nonlocal settings
 
         if key == "save_profile":
-            # value = {"mode": ..., "provider": ..., "model": ...}
             mode = value["mode"]
             settings["profiles"][mode]["provider"] = value["provider"]
             settings["profiles"][mode]["model"] = value["model"]
@@ -234,48 +304,43 @@ async def set_cmd(ctx: commands.Context):
 
             icon_p = PROVIDER_ICONS.get(value["provider"], "📦")
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
-            embed.set_footer(text=f"✅ {MODE_ICONS[mode]} {mode.title()} → {icon_p} {value['provider']}/{value['model']}")
+            embed.set_footer(text=f"✅ {MODE_ICONS[mode]} {mode.title()} → {icon_p} {value['provider']}/{value['model']} (saved!)")
+            save_settings(ctx.guild.id)  # 💾 SAVE!
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "auto_chat":
             settings["auto_chat"] = value
+            save_settings(ctx.guild.id)  # 💾 SAVE!
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "auto_detect":
             settings["auto_detect"] = value
+            save_settings(ctx.guild.id)  # 💾 SAVE!
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "active_mode":
             settings["active_mode"] = value
+            save_settings(ctx.guild.id)  # 💾 SAVE!
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "test_result":
-            # value = {"success": bool, "msg": str}
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             embed.set_footer(text=value["msg"])
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "reset":
-            settings.update({
-                "profiles": {
-                    "normal": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
-                    "reasoning": {"provider": "groq", "model": "deepseek-r1-distill-llama-70b"},
-                    "search": {"provider": "groq", "model": "llama-3.3-70b-versatile", "engine": "duckduckgo"},
-                },
-                "active_mode": "normal",
-                "auto_chat": False,
-                "auto_detect": False,
-            })
+            SettingsManager.reset(ctx.guild.id)  # 💾 RESET + SAVE!
+            settings = get_settings(ctx.guild.id)
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
-            embed.set_footer(text="🔄 Reset ke default")
+            embed.set_footer(text="🔄 Reset ke default (saved!)")
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -288,15 +353,16 @@ async def set_cmd(ctx: commands.Context):
     await ctx.send(embed=embed, view=view)
 
 # ============================================================
-# SIMPLE COMMANDS
+# SIMPLE COMMANDS (all auto-save!)
 # ============================================================
 
 @bot.command(name="toggle")
 async def toggle_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
     settings["auto_chat"] = not settings["auto_chat"]
+    save_settings(ctx.guild.id)  # 💾
     state = "🟢 ON" if settings["auto_chat"] else "🔴 OFF"
-    await ctx.send(f"Auto-chat: {state}")
+    await ctx.send(f"Auto-chat: {state} (saved! ✅)")
 
 @bot.command(name="channel")
 async def channel_cmd(ctx: commands.Context):
@@ -304,17 +370,19 @@ async def channel_cmd(ctx: commands.Context):
     ch = ctx.channel.id
     if ch in settings["enabled_channels"]:
         settings["enabled_channels"].remove(ch)
-        await ctx.send(f"🔴 {ctx.channel.mention} dihapus dari auto-chat")
+        save_settings(ctx.guild.id)  # 💾
+        await ctx.send(f"🔴 {ctx.channel.mention} dihapus dari auto-chat (saved! ✅)")
     else:
         settings["enabled_channels"].append(ch)
-        await ctx.send(f"🟢 {ctx.channel.mention} ditambahkan ke auto-chat")
+        save_settings(ctx.guild.id)  # 💾
+        await ctx.send(f"🟢 {ctx.channel.mention} ditambahkan ke auto-chat (saved! ✅)")
 
 @bot.command(name="status")
 async def status_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
     profiles = settings["profiles"]
 
-    lines = ["**⚙️ Current Configuration**\n"]
+    lines = ["**⚙️ Current Configuration** 💾\n"]
     for mode in ["normal", "reasoning", "search"]:
         p = profiles[mode]
         icon_m = MODE_ICONS.get(mode, "📦")
@@ -328,7 +396,11 @@ async def status_cmd(ctx: commands.Context):
 
     auto_chat = "🟢 ON" if settings["auto_chat"] else "🔴 OFF"
     auto_detect = "🟢 ON" if settings["auto_detect"] else "🔴 OFF"
+    
+    ch_count = len(settings["enabled_channels"])
     lines.append(f"\nAuto-chat: {auto_chat} | Auto-detect: {auto_detect}")
+    lines.append(f"Channels: {ch_count} enabled")
+    lines.append(f"\n-# 💾 Settings tersimpan di database (persist after restart)")
 
     embed = discord.Embed(description="\n".join(lines), color=discord.Color.blue())
     await ctx.send(embed=embed)
@@ -370,38 +442,39 @@ async def log_cmd(ctx: commands.Context, n: int = 10):
 
 @bot.command(name="reset")
 async def reset_cmd(ctx: commands.Context):
-    settings = get_settings(ctx.guild.id)
-    settings.update({
-        "profiles": {
-            "normal": {"provider": "groq", "model": "llama-3.3-70b-versatile"},
-            "reasoning": {"provider": "groq", "model": "deepseek-r1-distill-llama-70b"},
-            "search": {"provider": "groq", "model": "llama-3.3-70b-versatile", "engine": "duckduckgo"},
-        },
-        "active_mode": "normal",
-        "auto_chat": False,
-        "auto_detect": False,
-        "enabled_channels": [],
-    })
-    await ctx.send("🔄 Reset ke default berhasil.")
+    SettingsManager.reset(ctx.guild.id)  # 💾 Reset + Save
+    await ctx.send("🔄 Reset ke default berhasil. (saved! ✅)")
 
 # ============================================================
-# HELPERS
+# MEMORY COMMANDS (FIXED - now before bot.run!)
 # ============================================================
 
-def _split_message(text: str, limit: int = 2000) -> list:
-    if len(text) <= limit:
-        return [text]
-    chunks = []
-    while text:
-        if len(text) <= limit:
-            chunks.append(text)
-            break
-        sp = text.rfind('\n', 0, limit)
-        if sp == -1 or sp < limit // 2:
-            sp = limit
-        chunks.append(text[:sp])
-        text = text[sp:].lstrip()
-    return chunks
+@bot.command(name="clear", aliases=["forget", "lupa"])
+async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
+    """Clear conversation memory"""
+    from core.handler import clear_conversation
+    
+    if scope == "all":
+        clear_conversation(ctx.guild.id)
+        await ctx.send("🧹 Semua memory percakapan di server ini sudah dihapus!")
+    else:
+        clear_conversation(ctx.guild.id, ctx.channel.id)
+        await ctx.send(f"🧹 Memory percakapan di {ctx.channel.mention} sudah dihapus!")
+
+@bot.command(name="memory", aliases=["mem"])
+async def memory_cmd(ctx: commands.Context):
+    """Lihat status memory"""
+    from core.handler import get_memory_stats, get_conversation, MEMORY_EXPIRE_MINUTES, MAX_MEMORY_MESSAGES
+    
+    stats = get_memory_stats(ctx.guild.id)
+    channel_msgs = len(get_conversation(ctx.guild.id, ctx.channel.id))
+    
+    embed = discord.Embed(title="🧠 Conversation Memory", color=discord.Color.purple())
+    embed.add_field(name="Channel Ini", value=f"`{channel_msgs}` / `{MAX_MEMORY_MESSAGES}` pesan", inline=True)
+    embed.add_field(name="Server Total", value=f"`{stats['channels']}` channels\n`{stats['total_messages']}` pesan", inline=True)
+    embed.add_field(name="Auto-Expire", value=f"`{MEMORY_EXPIRE_MINUTES}` menit", inline=True)
+    embed.set_footer(text="Gunakan !clear untuk hapus memory")
+    await ctx.send(embed=embed)
 
 # ============================================================
 # SKILL COMMANDS
@@ -435,7 +508,7 @@ async def time_cmd(ctx: commands.Context, timezone: str = "Asia/Jakarta"):
 async def alarm_cmd(ctx: commands.Context, minutes: int, *, message: str = "⏰ Alarm!"):
     """Set alarm: !alarm 5 Waktunya meeting"""
     
-    if minutes < 1 or minutes > 1440:  # Max 24 jam
+    if minutes < 1 or minutes > 1440:
         await ctx.send("❌ Alarm hanya bisa 1-1440 menit (1 menit - 24 jam)")
         return
     
@@ -478,8 +551,20 @@ async def alarms_cmd(ctx: commands.Context):
     await ctx.send("\n".join(lines))
 
 @bot.command(name="calendar", aliases=["kalender", "cal"])
-async def calendar_cmd(ctx: commands.Context, month: int = None, year: int = None):
-    """Tampilkan kalender: !calendar atau !calendar 12 2026"""
+async def calendar_cmd(ctx: commands.Context, month_input: str = None, year: int = None):
+    """Tampilkan kalender: !calendar atau !calendar februari atau !calendar 12 2026"""
+    
+    # Parse month (support both number and name!)
+    month = None
+    if month_input:
+        month = parse_month(month_input)
+        if month is None:
+            await ctx.send(
+                f"❌ Bulan `{month_input}` tidak dikenali!\n"
+                f"💡 Contoh: `!calendar februari` atau `!calendar 2` atau `!calendar 12 2026`"
+            )
+            return
+    
     result = get_calendar(year, month)
     if result["success"]:
         embed = discord.Embed(
@@ -525,8 +610,9 @@ async def weather_cmd(ctx: commands.Context, *, city: str = "Jakarta"):
         await ctx.send(embed=embed)
     else:
         await ctx.send(f"❌ {result['error']}")
+
 # ============================================================
-# RUN
+# RUN — MUST BE LAST!
 # ============================================================
 
 if __name__ == "__main__":
@@ -535,34 +621,3 @@ if __name__ == "__main__":
         exit(1)
     log.info("Starting bot...")
     bot.run(DISCORD_TOKEN)
-
-# ============================================================
-# MEMORY COMMANDS
-# ============================================================
-
-@bot.command(name="clear", aliases=["forget", "lupa"])
-async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
-    """Clear conversation memory"""
-    from core.handler import clear_conversation
-    
-    if scope == "all":
-        clear_conversation(ctx.guild.id)
-        await ctx.send("🧹 Semua memory percakapan di server ini sudah dihapus!")
-    else:
-        clear_conversation(ctx.guild.id, ctx.channel.id)
-        await ctx.send(f"🧹 Memory percakapan di {ctx.channel.mention} sudah dihapus!")
-
-@bot.command(name="memory", aliases=["mem"])
-async def memory_cmd(ctx: commands.Context):
-    """Lihat status memory"""
-    from core.handler import get_memory_stats, get_conversation, MEMORY_EXPIRE_MINUTES, MAX_MEMORY_MESSAGES
-    
-    stats = get_memory_stats(ctx.guild.id)
-    channel_msgs = len(get_conversation(ctx.guild.id, ctx.channel.id))
-    
-    embed = discord.Embed(title="🧠 Conversation Memory", color=discord.Color.purple())
-    embed.add_field(name="Channel Ini", value=f"`{channel_msgs}` / `{MAX_MEMORY_MESSAGES}` pesan", inline=True)
-    embed.add_field(name="Server Total", value=f"`{stats['channels']}` channels\n`{stats['total_messages']}` pesan", inline=True)
-    embed.add_field(name="Auto-Expire", value=f"`{MEMORY_EXPIRE_MINUTES}` menit", inline=True)
-    embed.set_footer(text="Gunakan !clear untuk hapus memory")
-    await ctx.send(embed=embed)

@@ -27,3 +27,6 @@ tmp/
 .idea/
 *.swp
 *.swo
+
+# Database (local)
+data/
