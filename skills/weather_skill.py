@@ -1,32 +1,27 @@
 """
-Weather Skills (menggunakan wttr.in - no API key needed)
+Weather Skills (wttr.in - free, no API key)
 """
-
 import aiohttp
+import asyncio
 
 async def get_weather(city: str) -> dict:
-    """Ambil cuaca dari wttr.in (free, no API key)"""
-    
-    # wttr.in format: https://wttr.in/Jakarta?format=j1
     url = f"https://wttr.in/{city}?format=j1"
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as resp:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     current = data["current_condition"][0]
-                    
                     return {
                         "success": True,
-                        "city": city,
+                        "city": city.title(),
                         "temp": current["temp_C"],
                         "feels_like": current["FeelsLikeC"],
                         "humidity": current["humidity"],
                         "description": current["weatherDesc"][0]["value"],
                         "wind_speed": current["windspeedKmph"],
                     }
-                else:
-                    return {"success": False, "error": f"City not found: {city}"}
+                return {"success": False, "error": f"City not found: {city}"}
     except Exception as e:
         return {"success": False, "error": str(e)}

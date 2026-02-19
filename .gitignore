@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env
+.env.*
+*.env
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Logs / runtime
+*.log
+logs/
+tmp/
+.cache/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,4 +1,5 @@
 """
+from datetime import datetime
 Discord AI Bot - Entry Point
 Multi-provider AI with fallback system
 """
@@ -160,7 +161,7 @@ async def on_message(message: discord.Message):
     async with message.channel.typing():
         from core.handler import handle_message
         settings["guild_id"] = message.guild.id
-        result = await handle_message(content, settings)
+        result = await handle_message(content, settings, channel_id=message.channel.id)
 
     response_text = result["text"]
     fallback_note = result.get("fallback_note")
@@ -534,3 +535,34 @@ if __name__ == "__main__":
         exit(1)
     log.info("Starting bot...")
     bot.run(DISCORD_TOKEN)
+
+# ============================================================
+# MEMORY COMMANDS
+# ============================================================
+
+@bot.command(name="clear", aliases=["forget", "lupa"])
+async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
+    """Clear conversation memory"""
+    from core.handler import clear_conversation
+    
+    if scope == "all":
+        clear_conversation(ctx.guild.id)
+        await ctx.send("🧹 Semua memory percakapan di server ini sudah dihapus!")
+    else:
+        clear_conversation(ctx.guild.id, ctx.channel.id)
+        await ctx.send(f"🧹 Memory percakapan di {ctx.channel.mention} sudah dihapus!")
+
+@bot.command(name="memory", aliases=["mem"])
+async def memory_cmd(ctx: commands.Context):
+    """Lihat status memory"""
+    from core.handler import get_memory_stats, get_conversation, MEMORY_EXPIRE_MINUTES, MAX_MEMORY_MESSAGES
+    
+    stats = get_memory_stats(ctx.guild.id)
+    channel_msgs = len(get_conversation(ctx.guild.id, ctx.channel.id))
+    
+    embed = discord.Embed(title="🧠 Conversation Memory", color=discord.Color.purple())
+    embed.add_field(name="Channel Ini", value=f"`{channel_msgs}` / `{MAX_MEMORY_MESSAGES}` pesan", inline=True)
+    embed.add_field(name="Server Total", value=f"`{stats['channels']}` channels\n`{stats['total_messages']}` pesan", inline=True)
+    embed.add_field(name="Auto-Expire", value=f"`{MEMORY_EXPIRE_MINUTES}` menit", inline=True)
+    embed.set_footer(text="Gunakan !clear untuk hapus memory")
+    await ctx.send(embed=embed)
