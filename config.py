@@ -39,7 +39,9 @@ API_KEYS = {
     "tavily": os.getenv("TAVILY_API_KEY"),
     "brave": os.getenv("BRAVE_API_KEY"),
     "serper": os.getenv("SERPER_API_KEY"),
-}
+    
+    # Puter.com - Free 200+ AI Models (create account at puter.com)
+    "puter_api_key": os.getenv("PUTER_API_KEY"),}
 
 # ============================================================
 # DEFAULTS
@@ -283,6 +285,29 @@ PROVIDERS: Dict[str, Provider] = {
             Model("deepseek-r1:1.5b", "DeepSeek R1 1.5B", ["reasoning"]),
         ]
     ),
+
+    # ==================== PUTER ====================
+    "puter": Provider(
+        name="Puter",
+        endpoint="https://api.puter.com/drivers/call",
+        rate_limit="Free Tier (Puter.com)",
+        models=[
+            Model("gpt-4o", "GPT-4o", ["normal"], 128000),
+            Model("gpt-4o-mini", "GPT-4o Mini", ["normal"], 128000),
+            Model("gpt-4.1-nano", "GPT-4.1 Nano", ["normal"], 128000),
+            Model("claude-sonnet-4", "Claude Sonnet 4", ["normal", "reasoning"], 200000),
+            Model("claude-3-5-sonnet", "Claude 3.5 Sonnet", ["normal", "reasoning"], 200000),
+            Model("google/gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
+            Model("google/gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
+            Model("deepseek/deepseek-r1", "DeepSeek R1", ["reasoning"], 128000),
+            Model("deepseek/deepseek-chat", "DeepSeek Chat", ["normal"], 128000),
+            Model("x-ai/grok-3", "Grok 3", ["normal", "reasoning"], 131072),
+            Model("x-ai/grok-3-mini", "Grok 3 Mini", ["normal"], 131072),
+            Model("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B", ["normal"], 131072),
+            Model("perplexity/sonar", "Perplexity Sonar", ["search"], 128000),
+            Model("perplexity/sonar-pro", "Perplexity Sonar Pro", ["search"], 200000),
+        ]
+    ),
 }
 
 # ============================================================
@@ -336,6 +361,7 @@ FALLBACK_CHAINS = {
         ("pollinations", "gemini"),
         ("cerebras", "llama3.1-8b"),
         ("cloudflare", "@cf/meta/llama-3.1-8b-instruct"),
+        ("puter", "gpt-4o-mini"),
     ],
     "reasoning": [
         ("groq", "deepseek-r1-distill-llama-70b"),
@@ -393,7 +419,7 @@ def is_provider_available(provider_name: str) -> bool:
     if not provider:
         return False
     # MLVOCA and Pollinations (anonymous) don't need keys
-    if provider_name in ["mlvoca"]:
+    if provider_name in ["mlvoca", "puter"]:
         return True
     if provider_name == "pollinations":
         return True  # Works without key (anonymous mode)

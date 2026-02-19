@@ -63,6 +63,7 @@ PROVIDER_ICONS = {
     "siliconflow": "🧪",
     "routeway":    "🛣️",
     "mlvoca":      "🦙",
+    "puter":       "☁️",
 }
 
 SEARCH_ICONS = {

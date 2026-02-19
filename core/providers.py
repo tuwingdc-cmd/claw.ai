@@ -47,7 +47,7 @@ class BaseProvider(ABC):
     
     async def health_check(self) -> bool:
         """Check if provider is available"""
-        return self.api_key is not None or self.name in ["pollinations", "mlvoca"]
+        return self.api_key is not None or self.name in ["pollinations", "mlvoca", "puter"]
     
     def _build_headers(self) -> Dict[str, str]:
         """Build authorization headers"""
@@ -183,11 +183,9 @@ class PollinationsProvider(OpenAICompatibleProvider):
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        # Works without key (anonymous mode)
         return headers
     
     async def health_check(self) -> bool:
-        """Pollinations always available (anonymous mode)"""
         return True
 
 # ============================================================
@@ -234,12 +232,9 @@ class CohereProvider(BaseProvider):
         max_tokens: int = 4096,
         **kwargs
     ) -> AIResponse:
-        """Cohere uses different message format"""
-        
         import time
         start = time.time()
         
-        # Convert to Cohere format
         cohere_messages = []
         for msg in messages:
             role = "assistant" if msg["role"] == "assistant" else "user"
@@ -348,12 +343,9 @@ class GeminiProvider(BaseProvider):
         max_tokens: int = 4096,
         **kwargs
     ) -> AIResponse:
-        """Gemini uses generateContent endpoint"""
-        
         import time
         start = time.time()
         
-        # Convert messages to Gemini format
         contents = []
         system_instruction = None
         
@@ -444,8 +436,6 @@ class CloudflareProvider(BaseProvider):
         max_tokens: int = 4096,
         **kwargs
     ) -> AIResponse:
-        """Cloudflare uses /ai/run/{model} endpoint"""
-        
         import time
         start = time.time()
         
@@ -520,15 +510,11 @@ class MLVOCAProvider(BaseProvider):
         model: str,
         **kwargs
     ) -> AIResponse:
-        """MLVOCA uses simple generate endpoint"""
-        
         import time
         start = time.time()
         
-        # Get last user message as prompt
         prompt = messages[-1]["content"] if messages else ""
         
-        # Add system context if exists
         for msg in messages:
             if msg["role"] == "system":
                 prompt = f"{msg['content']}\n\n{prompt}"
@@ -580,7 +566,161 @@ class MLVOCAProvider(BaseProvider):
             )
     
     async def health_check(self) -> bool:
-        return True  # Always available
+        return True
+
+# ============================================================
+# PUTER PROVIDER - FREE 200+ AI Models!
+# ============================================================
+
+class PuterProvider(BaseProvider):
+    """
+    Puter.com API - Free access to 200+ AI models!
+    Uses API Token (get from: puter login --save)
+    
+    Models format examples:
+    - gpt-4o, gpt-4o-mini, gpt-4.1-nano
+    - claude-sonnet-4, claude-3-5-sonnet  
+    - google/gemini-2.5-flash, deepseek/deepseek-r1
+    - x-ai/grok-3, meta-llama/llama-3.3-70b-instruct
+    """
+    
+    def __init__(self, api_token: str = None):
+        super().__init__(api_token)
+        self.name = "puter"
+        self.api_token = api_token
+        self.base_url = "https://api.puter.com"
+    
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs
+    ) -> AIResponse:
+        import time
+        start = time.time()
+        
+        if not self.api_token:
+            return AIResponse(
+                success=False,
+                content="",
+                provider=self.name,
+                model=model,
+                error="Puter API token not provided"
+            )
+        
+        # Puter uses driver-based API
+        # Reference: https://github.com/xtekky/gpt4free/issues/2928
+        
+        # Determine driver based on model
+        if model.startswith("claude"):
+            driver = "anthropic"
+        elif model.startswith("google/") or model.startswith("gemini"):
+            driver = "google-vertex"
+        elif model.startswith("x-ai/") or model.startswith("grok"):
+            driver = "xai"
+        elif model.startswith("deepseek"):
+            driver = "deepseek"
+        elif model.startswith("meta-llama") or model.startswith("llama"):
+            driver = "together"
+        elif model.startswith("mistral"):
+            driver = "mistral"
+        elif model.startswith("perplexity"):
+            driver = "perplexity"
+        else:
+            driver = "openai-completion"  # Default for GPT models
+        
+        payload = {
+            "interface": "puter-chat-completion",
+            "driver": driver,
+            "test_mode": False,
+            "method": "complete",
+            "args": {
+                "messages": messages,
+                "model": model,
+                "stream": False,
+            }
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_token}",
+            "Origin": "https://puter.com"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/drivers/call",
+                    headers=headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=90)
+                ) as resp:
+                    latency = time.time() - start
+                    
+                    if resp.status == 200:
+                        data = await resp.json()
+                        
+                        # Extract content from Puter response
+                        try:
+                            if "result" in data:
+                                result = data["result"]
+                                if "message" in result:
+                                    content = result["message"].get("content", "")
+                                elif "choices" in result:
+                                    content = result["choices"][0]["message"]["content"]
+                                else:
+                                    content = str(result)
+                            elif "message" in data:
+                                content = data["message"].get("content", str(data))
+                            else:
+                                content = str(data)
+                        except:
+                            content = str(data)
+                        
+                        return AIResponse(
+                            success=True,
+                            content=content,
+                            provider=self.name,
+                            model=model,
+                            latency=latency
+                        )
+                    else:
+                        error_text = await resp.text()
+                        log.warning(f"Puter error {resp.status}: {error_text[:200]}")
+                        return AIResponse(
+                            success=False,
+                            content="",
+                            provider=self.name,
+                            model=model,
+                            error=f"HTTP {resp.status}: {error_text[:100]}",
+                            latency=latency
+                        )
+                        
+        except asyncio.TimeoutError:
+            return AIResponse(
+                success=False,
+                content="",
+                provider=self.name,
+                model=model,
+                error="Request timeout"
+            )
+        except Exception as e:
+            log.error(f"Puter exception: {e}")
+            return AIResponse(
+                success=False,
+                content="",
+                provider=self.name,
+                model=model,
+                error=str(e)
+            )
+    
+    async def health_check(self) -> bool:
+        return self.api_token is not None
+
+
+# Keep old class name for compatibility
 
 # ============================================================
 # PROVIDER FACTORY
@@ -612,7 +752,7 @@ class ProviderFactory:
                 
         elif provider_name == "pollinations":
             key = api_keys.get("pollinations")
-            provider = PollinationsProvider(key)  # Works without key
+            provider = PollinationsProvider(key)
             
         elif provider_name == "gemini":
             key = api_keys.get("gemini")
@@ -652,6 +792,11 @@ class ProviderFactory:
                 
         elif provider_name == "mlvoca":
             provider = MLVOCAProvider()
+        
+        elif provider_name == "puter":
+            token = api_keys.get("puter_api_key") or api_keys.get("puter")
+            if token:
+                provider = PuterProvider(token)
         
         if provider:
             cls._instances[provider_name] = provider
