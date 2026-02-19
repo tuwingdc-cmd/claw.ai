@@ -11,6 +11,13 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
+# Providers yang support tool calling
+TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "puter"}
+
+def supports_tool_calling(provider_name: str) -> bool:
+    return provider_name in TOOL_CAPABLE_PROVIDERS
+
+
 
 # ============================================================
 # BASE PROVIDER
@@ -26,6 +33,8 @@ class AIResponse:
     error: Optional[str] = None
     tokens_used: int = 0
     latency: float = 0.0
+    tool_calls: Any = None
+    raw: Any = None
 
 class BaseProvider(ABC):
     """Abstract base class for all AI providers"""
@@ -82,6 +91,11 @@ class OpenAICompatibleProvider(BaseProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+
+        # Inject tools jika disediakan (untuk tool calling)
+        if kwargs.get("tools"):
+            payload["tools"] = kwargs["tools"]
+            payload["tool_choice"] = kwargs.get("tool_choice", "auto")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -95,7 +109,9 @@ class OpenAICompatibleProvider(BaseProvider):
                     
                     if resp.status == 200:
                         data = await resp.json()
-                        content = data["choices"][0]["message"]["content"]
+                        msg = data["choices"][0].get("message", {})
+                        content = msg.get("content") or ""
+                        tool_calls = msg.get("tool_calls")
                         tokens = data.get("usage", {}).get("total_tokens", 0)
                         
                         return AIResponse(
@@ -104,7 +120,9 @@ class OpenAICompatibleProvider(BaseProvider):
                             provider=self.name,
                             model=model,
                             tokens_used=tokens,
-                            latency=latency
+                            latency=latency,
+                            tool_calls=tool_calls,
+                            raw=data
                         )
                     else:
                         error_text = await resp.text()

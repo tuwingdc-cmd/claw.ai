@@ -30,3 +30,6 @@ tmp/
 
 # Database (local)
 data/
+*.backup*
+*.pyy
+*.pyyny

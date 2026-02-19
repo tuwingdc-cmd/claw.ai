@@ -92,7 +92,11 @@ PROVIDERS: Dict[str, Provider] = {
         rate_limit="100 RPM",
         models=[
             # Production
-            Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
+            Model("groq/compound", "Groq Compound (Web Search)", ["normal", "search"], 131072),
+                Model("groq/compound-mini", "Groq Compound Mini (Fast)", ["normal", "search"], 131072),
+                Model("compound-beta", "Groq Compound Beta", ["normal", "search"], 131072),
+                Model("compound-beta-mini", "Groq Compound Beta Mini", ["normal", "search"], 131072),
+                Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
             Model("llama-3.1-8b-instant", "Llama 3.1 8B", ["normal"], 131072),
             Model("openai/gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
             Model("openai/gpt-oss-20b", "GPT-OSS 20B", ["normal"], 131072),

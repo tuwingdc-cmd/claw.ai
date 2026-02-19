@@ -561,7 +561,7 @@ from skills import (
     get_weather
 )
 
-@bot.command(name="time", aliases=["waktu", "jam"])
+@bot.command(name="time", aliases=["waktu"])
 async def time_cmd(ctx: commands.Context, timezone: str = "Asia/Jakarta"):
     """Cek waktu sekarang"""
     result = get_current_time(timezone)

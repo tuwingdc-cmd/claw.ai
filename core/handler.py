@@ -53,8 +53,39 @@ async def do_search(query: str, engine: str = "duckduckgo") -> str:
         return f"Search error: {e}"
     return "Search tidak tersedia."
 
-GROUNDING_MODELS = {("pollinations", "gemini-search"), ("pollinations", "perplexity-fast"), ("pollinations", "perplexity-reasoning")}
+GROUNDING_MODELS = {("groq", "groq/compound"), ("groq", "groq/compound-mini"), ("groq", "compound-beta"), ("groq", "compound-beta-mini"), ("pollinations", "gemini-search"), ("pollinations", "perplexity-fast"), ("pollinations", "perplexity-reasoning")}
 def is_grounding_model(p, m): return (p, m) in GROUNDING_MODELS
+
+# ============================================================
+# TOOL DEFINITIONS (untuk Auto Tool Calling)
+# ============================================================
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "Search the internet for real-time information. "
+            "Use this when asked about: current events, news, prices, "
+            "who is president/leader/CEO, sports results, weather, "
+            "anything that might have changed recently, or any fact "
+            "you are not confident about."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query in the most relevant language"
+                }
+            },
+            "required": ["query"]
+        }
+    }
+}
+
+TOOLS_LIST = [WEB_SEARCH_TOOL]
+
+
 
 # ============================================================
 # MODE DETECTOR
@@ -76,6 +107,89 @@ class ModeDetector:
 # ============================================================
 # FALLBACK
 # ============================================================
+
+
+# ============================================================
+# TOOL CALL EXECUTOR
+# ============================================================
+async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
+    """Eksekusi tool yang diminta AI"""
+    if tool_name == "web_search":
+        query = tool_args.get("query", "")
+        log.info(f"🔍 AI requested search: {query}")
+        return await do_search(query)
+    return f"Unknown tool: {tool_name}"
+
+async def handle_with_tools(messages: list, prov_name: str, model: str, 
+                             guild_id: int = 0) -> tuple:
+    """
+    Kirim ke AI dengan tools, handle tool_calls response,
+    jalankan tool, kirim balik ke AI, dapat jawaban final.
+    """
+    from core.providers import supports_tool_calling
+    
+    # Cek apakah provider support tools
+    if not supports_tool_calling(prov_name):
+        return None, None  # Signal: pakai fallback biasa
+    
+    prov = ProviderFactory.get(prov_name, API_KEYS)
+    if not prov or not await prov.health_check():
+        return None, None
+    
+    # Round 1: Kirim ke AI dengan tools
+    log.info(f"🤖 Tool calling: {prov_name}/{model}")
+    resp = await prov.chat(messages, model, tools=TOOLS_LIST, tool_choice="auto")
+    
+    if not resp.success:
+        return None, None
+    
+    import json
+    content_raw = resp.content
+    
+    # Cek apakah AI minta tool call
+    # Tool calls biasanya ada di response sebagai JSON khusus
+    # Groq/OpenRouter return tool_calls dalam content atau structured
+    tool_call_data = None
+    tool_calls = getattr(resp, "tool_calls", None)
+    if not tool_calls:
+        # AI tidak perlu tool → langsung return jawaban
+        return resp, None
+
+    tool_call_data = tool_calls[0]
+    
+    # AI minta search! Eksekusi tool
+    fn_name = tool_call_data.get("function", {}).get("name", "")
+    fn_args_str = tool_call_data.get("function", {}).get("arguments", "{}")
+    tool_call_id = tool_call_data.get("id", "call_0")
+    
+    try:
+        fn_args = json.loads(fn_args_str)
+    except:
+        fn_args = {"query": content_raw}
+    
+    tool_result = await execute_tool_call(fn_name, fn_args)
+    log.info(f"✅ Tool executed: {fn_name}")
+    
+    # Round 2: Kirim hasil tool ke AI, minta jawaban final
+    messages_with_tool = messages + [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [tool_call_data]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": tool_result
+        }
+    ]
+    
+    final_resp = await prov.chat(messages_with_tool, model)
+    if final_resp.success:
+        _log_request(guild_id, prov_name, model, True, final_resp.latency)
+        return final_resp, f"🔍 Auto-searched via {prov_name}/{model}"
+    
+    return None, None
 
 async def execute_with_fallback(messages, mode, preferred_provider, preferred_model, guild_id=0):
     chain = [(preferred_provider, preferred_model)]
@@ -165,13 +279,45 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     # STEP 2: Auto-detect mode
     # =========================================================
     
-    if settings.get("auto_detect") and len(history) == 0:
+    if settings.get("auto_detect"):
         detected = ModeDetector.detect(content)
         if detected != "normal":
             mode = detected
     
     # =========================================================
-    # STEP 3: Regular AI chat with DB memory
+    # STEP 2B: Coba Auto Tool Calling (AI putuskan sendiri)
+    # =========================================================
+    
+    profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
+    prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
+    
+    from core.providers import supports_tool_calling
+    if supports_tool_calling(prov):
+        # Build messages untuk tool calling
+        system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
+        formatted_history = []
+        for msg in history:
+            if msg["role"] == "user" and msg.get("user_name"):
+                formatted_history.append({"role": "user", "content": f"[{msg['user_name']}]: {msg['content']}"})
+            else:
+                formatted_history.append({"role": msg["role"], "content": msg["content"]})
+        
+        tool_msgs = [
+            {"role": "system", "content": system_prompt},
+            *formatted_history,
+            {"role": "user", "content": f"[{user_name}]: {content}"}
+        ]
+        
+        tool_resp, tool_note = await handle_with_tools(tool_msgs, prov, mid, guild_id)
+        if tool_resp and tool_resp.success:
+            text = strip_think_tags(tool_resp.content) or "Tidak ada jawaban."
+            save_message(guild_id, channel_id, user_id, user_name, "user", content)
+            save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
+            return {"text": text, "fallback_note": tool_note}
+        # Kalau tool calling gagal, lanjut ke STEP 3 biasa
+    
+    # =========================================================
+    # STEP 3: Regular AI chat with DB memory (Fallback)
     # =========================================================
     
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
