@@ -158,9 +158,10 @@ async def on_message(message: discord.Message):
         content = "Hello!"
 
     async with message.channel.typing():
-        from core.handler import handle_message
-        result = await handle_message(content, settings)
-
+            from core.handler import handle_message
+            # Inject guild_id ke settings supaya log bisa track
+            settings["guild_id"] = message.guild.id
+            result = await handle_message(content, settings)
         # result = { "text": "...", "fallback_note": "..." or None }
         response_text = result["text"]
         fallback_note = result.get("fallback_note")
