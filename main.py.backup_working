@@ -6,7 +6,6 @@ Settings persist via SQLite!
 
 import discord
 from discord.ext import commands
-import wavelink
 import asyncio
 import logging
 from datetime import datetime
@@ -43,7 +42,7 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(
-    command_prefix=commands.when_mentioned_or(DISCORD_PREFIX, ".", ","),
+    command_prefix=DISCORD_PREFIX,
     intents=intents,
     help_command=None
 )
@@ -137,53 +136,6 @@ def get_active_profile(guild_id: int) -> dict:
 # EVENTS
 # ============================================================
 
-
-# ============================================================
-# WAVELINK EVENTS (Music System)
-# ============================================================
-
-@bot.event
-async def setup_hook():
-    """Initialize wavelink before bot ready"""
-    from config import LAVALINK_NODES
-    try:
-        for node_config in LAVALINK_NODES:
-            node = wavelink.Node(
-                identifier=node_config["identifier"],
-                uri=f"{'https' if node_config['secure'] else 'http'}://{node_config['host']}:{node_config['port']}",
-                password=node_config["password"],
-            )
-            await wavelink.Pool.connect(client=bot, nodes=[node])
-        log.info(f"🎵 Wavelink initialized with {len(LAVALINK_NODES)} node(s)")
-    except Exception as e:
-        log.error(f"❌ Failed to connect Wavelink: {e}")
-
-@bot.event
-async def on_wavelink_node_ready(payload: wavelink.NodeReadyEventPayload):
-    log.info(f"🎵 Lavalink Node '{payload.node.identifier}' ready!")
-
-@bot.event
-async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
-    player = payload.player
-    track = payload.track
-    from music.player import get_player
-    music_player = get_player(player.guild.id)
-    if music_player and music_player.now_playing_message:
-        try:
-            from music.views import create_now_playing_embed, MusicControlView
-            embed = create_now_playing_embed(track, player)
-            view = MusicControlView(player)
-            await music_player.now_playing_message.edit(embed=embed, view=view)
-        except: pass
-
-@bot.event
-async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
-    player = payload.player
-    from music.player import get_player
-    music_player = get_player(player.guild.id)
-    if music_player and music_player.auto_play:
-        await music_player.play_next()
-
 @bot.event
 async def on_ready():
     log.info(f"Bot ready: {bot.user.name} ({bot.user.id})")
@@ -210,17 +162,6 @@ async def on_ready():
     
     log.info("=" * 50)
     log.info("BOT FULLY READY - ALL SYSTEMS GO")
-    
-    # Load music commands
-    try:
-        from music.commands import setup as setup_music
-        await setup_music(bot)
-        log.info("🎵 Music module loaded!")
-    except Exception as e:
-        log.error(f"❌ Failed to load music: {e}")
-        import traceback
-        traceback.print_exc()
-
     log.info("=" * 50)
     
     await bot.change_presence(
@@ -267,7 +208,7 @@ async def on_message(message: discord.Message):
     async with message.channel.typing():
         from core.handler import handle_message
         settings["guild_id"] = message.guild.id
-        result = await handle_message(content, settings, channel_id=message.channel.id, user_id=message.author.id, user_name=message.author.display_name)
+        result = await handle_message(content, settings, channel_id=message.channel.id)
 
     response_text = result["text"]
     fallback_note = result.get("fallback_note")
@@ -304,20 +245,6 @@ def _split_message(text: str, limit: int = 2000) -> list:
 # ============================================================
 # COMMANDS
 # ============================================================
-
-
-@bot.event
-async def on_command_error(ctx, error):
-    """Suppress CommandNotFound errors silently"""
-    if isinstance(error, commands.CommandNotFound):
-        return  # Ignore unknown commands silently
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Missing argument: `{error.param.name}`")
-    elif isinstance(error, commands.CommandInvokeError):
-        log.error(f"Command error in {ctx.command}: {error.original}")
-        await ctx.send(f"❌ Error: {error.original}")
-    else:
-        log.error(f"Unhandled error: {error}")
 
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
@@ -526,7 +453,7 @@ async def reset_cmd(ctx: commands.Context):
 @bot.command(name="clear", aliases=["forget", "lupa"])
 async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
     """Clear conversation memory"""
-    from core.database import clear_conversation
+    from core.handler import clear_conversation
     
     if scope == "all":
         clear_conversation(ctx.guild.id)
@@ -538,7 +465,7 @@ async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
 @bot.command(name="memory", aliases=["mem"])
 async def memory_cmd(ctx: commands.Context):
     """Lihat status memory"""
-    from core.database import get_memory_stats, get_conversation, MAX_MEMORY_MESSAGES
+    from core.handler import get_memory_stats, get_conversation, MEMORY_EXPIRE_MINUTES, MAX_MEMORY_MESSAGES
     
     stats = get_memory_stats(ctx.guild.id)
     channel_msgs = len(get_conversation(ctx.guild.id, ctx.channel.id))
@@ -546,7 +473,7 @@ async def memory_cmd(ctx: commands.Context):
     embed = discord.Embed(title="🧠 Conversation Memory", color=discord.Color.purple())
     embed.add_field(name="Channel Ini", value=f"`{channel_msgs}` / `{MAX_MEMORY_MESSAGES}` pesan", inline=True)
     embed.add_field(name="Server Total", value=f"`{stats['channels']}` channels\n`{stats['total_messages']}` pesan", inline=True)
-    embed.add_field(name="Storage", value="💾 Database", inline=True)
+    embed.add_field(name="Auto-Expire", value=f"`{MEMORY_EXPIRE_MINUTES}` menit", inline=True)
     embed.set_footer(text="Gunakan !clear untuk hapus memory")
     await ctx.send(embed=embed)
 

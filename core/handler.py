@@ -1,49 +1,22 @@
 """
-Message Handler + Conversation Memory + Smart Skills
-Bot otomatis detect kapan harus pakai skill/search/chat biasa
+Message Handler + DB-backed Conversation Memory + Smart Skills
 """
 import logging
 import re
 import asyncio
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
-from collections import defaultdict
+from typing import Dict, List, Optional
+from datetime import datetime
 from core.providers import ProviderFactory, AIResponse
+from core.database import (
+    save_message, get_conversation, clear_conversation,
+    get_memory_stats, MAX_MEMORY_MESSAGES
+)
 from config import API_KEYS, FALLBACK_CHAINS, PROVIDERS
 
 log = logging.getLogger(__name__)
 
-# ============================================================
-# CONVERSATION MEMORY
-# ============================================================
-
-conversation_memory = defaultdict(lambda: defaultdict(lambda: {"messages": [], "last_activity": None}))
-MAX_MEMORY_MESSAGES = 20
-MEMORY_EXPIRE_MINUTES = 30
-
-def get_conversation(guild_id: int, channel_id: int) -> list:
-    conv = conversation_memory[guild_id][channel_id]
-    if conv["last_activity"] and datetime.now() - conv["last_activity"] > timedelta(minutes=MEMORY_EXPIRE_MINUTES):
-        conv["messages"], conv["last_activity"] = [], None
-    return conv["messages"].copy()
-
-def add_to_conversation(guild_id: int, channel_id: int, role: str, content: str):
-    conv = conversation_memory[guild_id][channel_id]
-    conv["messages"].append({"role": role, "content": content})
-    conv["last_activity"] = datetime.now()
-    if len(conv["messages"]) > MAX_MEMORY_MESSAGES:
-        conv["messages"] = conv["messages"][-MAX_MEMORY_MESSAGES:]
-
-def clear_conversation(guild_id: int, channel_id: int = None):
-    if channel_id:
-        conversation_memory[guild_id][channel_id] = {"messages": [], "last_activity": None}
-    else:
-        conversation_memory[guild_id] = defaultdict(lambda: {"messages": [], "last_activity": None})
-
-def get_memory_stats(guild_id: int) -> dict:
-    if guild_id not in conversation_memory:
-        return {"channels": 0, "total_messages": 0}
-    return {"channels": len(conversation_memory[guild_id]), "total_messages": sum(len(c["messages"]) for c in conversation_memory[guild_id].values())}
+# Re-export for backward compatibility
+MEMORY_EXPIRE_MINUTES = 0  # No expiry, DB-based now
 
 # ============================================================
 # REQUEST LOGS
@@ -56,8 +29,6 @@ def _log_request(guild_id, provider, model, success, latency, is_fallback=False,
     request_logs.append({"guild_id": guild_id, "provider": provider, "model": model, "success": success, "latency": latency, "is_fallback": is_fallback, "error": error, "time": datetime.now().strftime("%H:%M:%S")})
     if len(request_logs) > MAX_LOGS:
         request_logs.pop(0)
-
-PROVIDER_ICONS = {"groq": "🐆", "openrouter": "🧭", "pollinations": "🐝", "gemini": "🔷", "cloudflare": "☁️", "huggingface": "🤗", "cerebras": "🧠", "cohere": "🧵", "siliconflow": "🧪", "routeway": "🛣️", "mlvoca": "🦙"}
 
 def strip_think_tags(content: str) -> str:
     for tag in ['think', 'thinking', 'thought']:
@@ -83,27 +54,18 @@ async def do_search(query: str, engine: str = "duckduckgo") -> str:
     return "Search tidak tersedia."
 
 GROUNDING_MODELS = {("pollinations", "gemini-search"), ("pollinations", "perplexity-fast"), ("pollinations", "perplexity-reasoning")}
-def is_grounding_model(p: str, m: str) -> bool: return (p, m) in GROUNDING_MODELS
+def is_grounding_model(p, m): return (p, m) in GROUNDING_MODELS
 
 # ============================================================
-# SMART MODE DETECTOR
+# MODE DETECTOR
 # ============================================================
 
 class ModeDetector:
-    SEARCH_KW = [
-        "berita terbaru", "berita hari ini", "harga sekarang", "update terbaru",
-        "kabar terbaru", "news today", "current price", "latest news",
-        "stock price", "kurs dollar", "hasil pertandingan", "jadwal hari ini",
-        "siapa yang menang", "skor pertandingan",
-    ]
-    REASON_KW = [
-        "jelaskan step by step", "langkah demi langkah", "hitung ",
-        "analisis ", "buktikan ", "solve ", "calculate ", "analyze ",
-        "tulis kode", "write code", "debug ", "buatkan program",
-    ]
+    SEARCH_KW = ["berita terbaru", "harga sekarang", "news today", "current price", "latest news"]
+    REASON_KW = ["jelaskan step by step", "hitung ", "analisis ", "solve ", "tulis kode", "write code"]
     
     @classmethod
-    def detect(cls, content: str) -> str:
+    def detect(cls, content):
         lower = content.lower()
         for kw in cls.SEARCH_KW:
             if kw in lower: return "search"
@@ -140,40 +102,37 @@ async def execute_with_fallback(messages, mode, preferred_provider, preferred_mo
 # ============================================================
 
 SYSTEM_PROMPTS = {
-    "normal": """You are a helpful AI assistant with access to real-time tools.
-You can check time, weather, calendar, and search the internet.
-When tool results are provided, use them naturally in your response.
-Remember conversation context. Respond in user's language. Be concise.""",
+    "normal": """You are a helpful AI assistant in a Discord server.
+You can see who is talking by their name in [brackets].
+Multiple users may be chatting — address them by name when appropriate.
+Remember full conversation context. Respond in user's language. Be concise and friendly.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
+Multiple users may ask questions — keep track of who asked what.
 Do not use <think> tags. Explain naturally. Respond in user's language.""",
 
     "search": """You are an AI with web search results.
 Answer based on search results AND conversation context.
 Cite URLs when relevant. Respond in user's language.""",
 
-    "search_grounding": """You are an AI with web search capability.
-Use conversation context for follow-up questions.
-Find current info. Cite sources. Respond in user's language.""",
-
     "with_skill": """You are a helpful AI assistant. Tool results are provided below.
-Present the information naturally and conversationally.
-If the user asked a follow-up question, use conversation context.
+Present the information naturally. Track who asked what.
 Respond in the same language as the user.""",
 }
 
 # ============================================================
-# MAIN HANDLER - WITH SMART SKILLS
+# MAIN HANDLER
 # ============================================================
 
-async def handle_message(content: str, settings: Dict, channel_id: int = 0) -> Dict:
+async def handle_message(content: str, settings: Dict, channel_id: int = 0, user_id: int = 0, user_name: str = "User") -> Dict:
     mode = settings.get("active_mode", "normal")
     guild_id = settings.get("guild_id", 0)
     
-    history = get_conversation(guild_id, channel_id)
+    # Get conversation history from DATABASE
+    history = get_conversation(guild_id, channel_id, limit=30)
     
     # =========================================================
-    # STEP 1: Try smart skills first (time, weather, calendar)
+    # STEP 1: Try smart skills (time, weather, calendar)
     # =========================================================
     
     skill_result = None
@@ -184,74 +143,71 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0) -> D
         log.warning(f"Skill detection error: {e}")
     
     if skill_result:
-        log.info(f"Skill matched, enriching with AI")
-        
-        # Use AI to make skill result more natural
         profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
         prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
         
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPTS["with_skill"]},
-            *history,
-            {"role": "user", "content": f"User bertanya: {content}\n\nHasil tool:\n{skill_result}\n\nSampaikan informasi ini secara natural dan ramah."}
+            *[{"role": m["role"], "content": m["content"]} for m in history],
+            {"role": "user", "content": f"[{user_name}] bertanya: {content}\n\nHasil tool:\n{skill_result}\n\nSampaikan informasi ini secara natural."}
         ]
         
         resp, fb_note = await execute_with_fallback(msgs, mode, prov, mid, guild_id)
+        text = strip_think_tags(resp.content) if resp.success else skill_result
         
-        if resp.success:
-            text = strip_think_tags(resp.content) or skill_result
-        else:
-            # Fallback: return raw skill result if AI fails
-            text = skill_result
-            fb_note = None
+        # Save to database
+        save_message(guild_id, channel_id, user_id, user_name, "user", content)
+        save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
         
-        add_to_conversation(guild_id, channel_id, "user", content)
-        add_to_conversation(guild_id, channel_id, "assistant", text)
         return {"text": text, "fallback_note": fb_note if resp.success else None}
     
     # =========================================================
-    # STEP 2: Auto-detect search mode (only on first message)
+    # STEP 2: Auto-detect mode
     # =========================================================
     
     if settings.get("auto_detect") and len(history) == 0:
         detected = ModeDetector.detect(content)
         if detected != "normal":
             mode = detected
-            log.info(f"Auto-detected mode: {mode}")
     
     # =========================================================
-    # STEP 3: Regular AI chat with memory
+    # STEP 3: Regular AI chat with DB memory
     # =========================================================
     
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
     
+    # Build messages with user identification
+    formatted_history = []
+    for msg in history:
+        if msg["role"] == "user" and msg.get("user_name"):
+            formatted_history.append({"role": "user", "content": f"[{msg['user_name']}]: {msg['content']}"})
+        else:
+            formatted_history.append({"role": msg["role"], "content": msg["content"]})
+    
     if mode == "search" and not is_grounding_model(prov, mid):
         search_res = await do_search(content, profile.get("engine", "duckduckgo"))
-        context = ""
-        if history:
-            context = "Percakapan sebelumnya:\n"
-            for msg in history[-6:]:
-                role = "User" if msg["role"] == "user" else "Bot"
-                context += f"{role}: {msg['content'][:200]}\n"
-            context += "\n"
         msgs = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"{context}Pertanyaan: {content}\n\nHasil pencarian:\n{search_res}"}
+            *formatted_history,
+            {"role": "user", "content": f"[{user_name}]: {content}\n\nHasil pencarian:\n{search_res}"}
         ]
     else:
         msgs = [
             {"role": "system", "content": system_prompt},
-            *history,
-            {"role": "user", "content": content}
+            *formatted_history,
+            {"role": "user", "content": f"[{user_name}]: {content}"}
         ]
     
     resp, fb_note = await execute_with_fallback(msgs, mode, prov, mid, guild_id)
     
     if resp.success:
         text = strip_think_tags(resp.content) or "Tidak ada jawaban."
-        add_to_conversation(guild_id, channel_id, "user", content)
-        add_to_conversation(guild_id, channel_id, "assistant", text)
+        
+        # Save to database
+        save_message(guild_id, channel_id, user_id, user_name, "user", content)
+        save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
+        
         return {"text": text, "fallback_note": fb_note}
     return {"text": resp.content, "fallback_note": None}

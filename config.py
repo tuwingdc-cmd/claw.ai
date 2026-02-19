@@ -384,6 +384,25 @@ FALLBACK_CHAINS = {
 }
 
 # ============================================================
+# LAVALINK NODES (Music Servers)
+# ============================================================
+
+LAVALINK_NODES = [
+    {
+        "identifier": "Serenetia-V4",
+        "host": os.getenv("LAVALINK_HOST", "lavalinkv4.serenetia.com"),
+        "port": int(os.getenv("LAVALINK_PORT", "443")),
+        "password": os.getenv("LAVALINK_PASSWORD", "https://dsc.gg/ajidevserver"),
+        "secure": os.getenv("LAVALINK_SECURE", "true").lower() == "true",
+        "heartbeat": 30,
+        "retries": 3,
+    }
+]
+
+# Lyrics API
+GENIUS_TOKEN = os.getenv("GENIUS_API_KEY")
+
+# ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
