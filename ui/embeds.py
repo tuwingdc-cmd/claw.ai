@@ -8,6 +8,7 @@ from discord.ui import View, Select, Button, select, button
 from discord import SelectOption, Interaction, Embed
 from typing import Dict, Callable, Optional, List
 import logging
+import asyncio
 
 from config import PROVIDERS, FALLBACK_CHAINS, list_available_providers
 
@@ -40,7 +41,6 @@ def create_settings_panel(
             si = search_icons.get(p.get("engine", "duckduckgo"), "🔍")
             line += f" + {si} `{p.get('engine', 'duckduckgo')}`"
             
-            # Show if model has built-in grounding
             from core.handler import is_grounding_model
             if is_grounding_model(p["provider"], p["model"]):
                 line += " *(built-in search)*"
@@ -58,7 +58,6 @@ def create_settings_panel(
         inline=False
     )
 
-    # Search info
     embed.add_field(
         name="🔍 Search Info",
         value=(
@@ -72,10 +71,65 @@ def create_settings_panel(
     return embed
 
 # ============================================================
+# BASE VIEW WITH TIMEOUT HANDLING
+# ============================================================
+
+class BaseView(View):
+    """Base view with proper timeout handling"""
+    
+    def __init__(self, timeout=300):
+        super().__init__(timeout=timeout)
+        self.message: Optional[discord.Message] = None
+    
+    async def on_timeout(self):
+        """Disable all items when view times out"""
+        for item in self.children:
+            item.disabled = True
+        
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except:
+                pass
+    
+    async def on_error(self, interaction: Interaction, error: Exception, item):
+        """Handle errors gracefully"""
+        log.error(f"View error: {error}", exc_info=True)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    f"❌ Error: {str(error)[:100]}", 
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"❌ Error: {str(error)[:100]}", 
+                    ephemeral=True
+                )
+        except:
+            pass
+
+# ============================================================
+# SAFE INTERACTION RESPONSE
+# ============================================================
+
+async def safe_respond(interaction: Interaction, embed: Embed = None, view: View = None):
+    """Safely respond to interaction"""
+    try:
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=view)
+        else:
+            await interaction.response.edit_message(embed=embed, view=view)
+    except discord.NotFound:
+        log.warning("Interaction expired")
+    except Exception as e:
+        log.error(f"Response error: {e}")
+
+# ============================================================
 # MAIN SETTINGS VIEW
 # ============================================================
 
-class SettingsView(View):
+class SettingsView(BaseView):
     """Main settings: mode selector + toggles"""
 
     def __init__(self, settings, callback, provider_icons, search_icons, mode_icons, timeout=300):
@@ -86,7 +140,6 @@ class SettingsView(View):
         self.si = search_icons
         self.mi = mode_icons
 
-        # Row 0: Mode selector
         self.add_item(ModeDropdown(settings, self._on_mode_select, mode_icons, provider_icons))
 
     async def _on_mode_select(self, interaction: Interaction, mode: str):
@@ -96,7 +149,9 @@ class SettingsView(View):
         
         embed = create_mode_config_embed(mode, profile, self.mi, self.pi, self.si)
         view = ModeConfigView(self.settings, mode, self.callback, self.mi, self.pi, self.si)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view.message = interaction.message
+        
+        await safe_respond(interaction, embed=embed, view=view)
 
     @button(label="Auto-Detect", style=discord.ButtonStyle.secondary, emoji="🔄", row=1)
     async def toggle_detect(self, interaction: Interaction, btn: Button):
@@ -119,7 +174,9 @@ class SettingsView(View):
 
         embed = Embed(title="📊 Provider Health", description="\n".join(lines), color=discord.Color.blue())
         view = BackToMainView(self.settings, self.callback, self.pi, self.si, self.mi)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view.message = interaction.message
+        
+        await safe_respond(interaction, embed=embed, view=view)
 
     @button(label="Reset", style=discord.ButtonStyle.danger, emoji="🔄", row=1)
     async def reset(self, interaction: Interaction, btn: Button):
@@ -185,7 +242,6 @@ def create_mode_config_embed(mode, profile, mode_icons, provider_icons, search_i
 
     embed.add_field(name="Current", value=current, inline=False)
 
-    # Fallback chain
     chain = FALLBACK_CHAINS.get(mode, FALLBACK_CHAINS["normal"])
     fb_lines = []
     for i, (prov, model) in enumerate(chain[:5], 1):
@@ -201,8 +257,7 @@ def create_mode_config_embed(mode, profile, mode_icons, provider_icons, search_i
             value=(
                 "**Model grounding** (otomatis search):\n"
                 "• 🐝 Pollinations → `gemini-search`\n"
-                "• 🐝 Pollinations → `perplexity-fast`\n"
-                "• 🐝 Pollinations → `perplexity-reasoning`\n\n"
+                "• 🐝 Pollinations → `perplexity-fast`\n\n"
                 "**Model biasa** (manual search):\n"
                 "• 🦆 DuckDuckGo cari info → LLM rangkum"
             ),
@@ -213,10 +268,10 @@ def create_mode_config_embed(mode, profile, mode_icons, provider_icons, search_i
     return embed
 
 # ============================================================
-# MODE CONFIG VIEW (Provider + Model + Save/Test/Back)
+# MODE CONFIG VIEW
 # ============================================================
 
-class ModeConfigView(View):
+class ModeConfigView(BaseView):
     """Configure provider + model for a specific mode"""
 
     def __init__(self, settings, mode, callback, mode_icons, provider_icons, search_icons, timeout=300):
@@ -231,12 +286,10 @@ class ModeConfigView(View):
         self._selected_provider = settings["profiles"][mode]["provider"]
         self._selected_model = settings["profiles"][mode]["model"]
 
-        # Row 0: Provider dropdown
         self.add_item(ProviderDropdown(
             settings, mode, provider_icons, self._on_provider_select
         ))
 
-        # Row 1: Model dropdown
         self.add_item(ModelDropdown(
             self._selected_provider, self._selected_model, mode, self._on_model_select
         ))
@@ -245,10 +298,8 @@ class ModeConfigView(View):
         """Provider selected → refresh model list"""
         self._selected_provider = provider_name
         
-        # Auto-select first model
         provider = PROVIDERS.get(provider_name)
         if provider and provider.models:
-            # Try to find a model that matches the mode
             for m in provider.models:
                 if self.mode in m.modes:
                     self._selected_model = m.id
@@ -256,15 +307,15 @@ class ModeConfigView(View):
             else:
                 self._selected_model = provider.models[0].id
 
-        # Update profile temporarily
         self.settings["profiles"][self.mode]["provider"] = provider_name
         self.settings["profiles"][self.mode]["model"] = self._selected_model
 
-        # Rebuild embed + view with new model dropdown
         profile = self.settings["profiles"][self.mode]
         embed = create_mode_config_embed(self.mode, profile, self.mi, self.pi, self.si)
         view = ModeConfigView(self.settings, self.mode, self.cb, self.mi, self.pi, self.si)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view.message = interaction.message
+        
+        await safe_respond(interaction, embed=embed, view=view)
 
     async def _on_model_select(self, interaction: Interaction, model_id: str):
         """Model selected → update display"""
@@ -274,9 +325,10 @@ class ModeConfigView(View):
         profile = self.settings["profiles"][self.mode]
         embed = create_mode_config_embed(self.mode, profile, self.mi, self.pi, self.si)
         
-        # Rebuild view to keep dropdowns alive
         view = ModeConfigView(self.settings, self.mode, self.cb, self.mi, self.pi, self.si)
-        await interaction.response.edit_message(embed=embed, view=view)
+        view.message = interaction.message
+        
+        await safe_respond(interaction, embed=embed, view=view)
 
     @button(label="Save", style=discord.ButtonStyle.success, emoji="✅", row=2)
     async def save_btn(self, interaction: Interaction, btn: Button):
@@ -292,29 +344,13 @@ class ModeConfigView(View):
     @button(label="Test", style=discord.ButtonStyle.primary, emoji="🧪", row=2)
     async def test_btn(self, interaction: Interaction, btn: Button):
         """Test model with a simple ping"""
-        # Defer to avoid timeout (test bisa lambat)
+        # ✅ FIXED: Proper defer handling
         await interaction.response.defer()
         
         from core.providers import ProviderFactory
         from config import API_KEYS
 
         provider = ProviderFactory.get(self._selected_provider, API_KEYS)
-        if not provider:
-            embed = create_mode_config_embed(
-                self.mode, self.settings["profiles"][self.mode],
-                self.mi, self.pi, self.si
-            )
-            icon = self.pi.get(self._selected_provider, "📦")
-            embed.set_footer(text=f"❌ {icon} {self._selected_provider}: no API key")
-            view = ModeConfigView(self.settings, self.mode, self.cb, self.mi, self.pi, self.si)
-            await interaction.followup.edit_message(
-                message_id=interaction.message.id, embed=embed, view=view
-            )
-            return
-
-        messages = [{"role": "user", "content": "Respond with only: OK"}]
-        result = await provider.chat(messages, self._selected_model, max_tokens=10)
-
         icon = self.pi.get(self._selected_provider, "📦")
         
         embed = create_mode_config_embed(
@@ -322,19 +358,44 @@ class ModeConfigView(View):
             self.mi, self.pi, self.si
         )
         
-        if result.success:
-            embed.set_footer(
-                text=f"✅ Test passed: {icon} {self._selected_provider}/{self._selected_model} ({result.latency:.1f}s)"
+        if not provider:
+            embed.set_footer(text=f"❌ {icon} {self._selected_provider}: no API key")
+            view = ModeConfigView(self.settings, self.mode, self.cb, self.mi, self.pi, self.si)
+            view.message = interaction.message
+            await interaction.edit_original_response(embed=embed, view=view)
+            return
+
+        messages = [{"role": "user", "content": "Respond with only: OK"}]
+        
+        try:
+            result = await asyncio.wait_for(
+                provider.chat(messages, self._selected_model, max_tokens=10),
+                timeout=30.0
             )
-        else:
+            
+            if result.success:
+                embed.set_footer(
+                    text=f"✅ Test passed: {icon} {self._selected_provider}/{self._selected_model} ({result.latency:.1f}s)"
+                )
+            else:
+                error_msg = str(result.error)[:50] if result.error else "Unknown"
+                embed.set_footer(
+                    text=f"❌ Test failed: {icon} {self._selected_provider}/{self._selected_model} — {error_msg}"
+                )
+        except asyncio.TimeoutError:
             embed.set_footer(
-                text=f"❌ Test failed: {icon} {self._selected_provider}/{self._selected_model} — {result.error}"
+                text=f"⏱️ Timeout: {icon} {self._selected_provider}/{self._selected_model} (>30s)"
+            )
+        except Exception as e:
+            embed.set_footer(
+                text=f"❌ Error: {icon} {self._selected_provider} — {str(e)[:50]}"
             )
 
         view = ModeConfigView(self.settings, self.mode, self.cb, self.mi, self.pi, self.si)
-        await interaction.followup.edit_message(
-            message_id=interaction.message.id, embed=embed, view=view
-        )
+        view.message = interaction.message
+        
+        # ✅ FIXED: Use edit_original_response after defer
+        await interaction.edit_original_response(embed=embed, view=view)
 
     @button(label="Back", style=discord.ButtonStyle.secondary, emoji="◀️", row=2)
     async def back_btn(self, interaction: Interaction, btn: Button):
@@ -359,7 +420,6 @@ class ProviderDropdown(Select):
             else:
                 status = "✓ ready"
 
-            # Count models for this mode
             mode_models = [m for m in provider.models if mode in m.modes]
             all_models = len(provider.models)
             
@@ -376,8 +436,7 @@ class ProviderDropdown(Select):
         super().__init__(
             placeholder="Step 1: Pilih Provider",
             options=options[:25],
-            row=0,
-            custom_id=f"provider_select_{mode}"
+            row=0
         )
 
     async def callback(self, interaction: Interaction):
@@ -394,7 +453,6 @@ class ModelDropdown(Select):
         options = []
 
         if provider:
-            # Show mode-specific models first, then others
             mode_models = [m for m in provider.models if mode in m.modes]
             other_models = [m for m in provider.models if mode not in m.modes]
             
@@ -417,7 +475,6 @@ class ModelDropdown(Select):
                     default=model.id == current_model
                 ))
 
-            # Separator: other models
             for model in other_models:
                 options.append(SelectOption(
                     label=model.name[:100],
@@ -432,19 +489,21 @@ class ModelDropdown(Select):
         super().__init__(
             placeholder="Step 2: Pilih Model",
             options=options[:25],
-            row=1,
-            custom_id=f"model_select_{provider_name}_{mode}"
+            row=1
         )
 
     async def callback(self, interaction: Interaction):
         if self.values[0] != "none":
             await self.cb(interaction, self.values[0])
+        else:
+            # ✅ FIXED: Always respond to prevent interaction failed
+            await interaction.response.defer()
 
 # ============================================================
 # BACK TO MAIN VIEW
 # ============================================================
 
-class BackToMainView(View):
+class BackToMainView(BaseView):
     def __init__(self, settings, callback, pi, si, mi, timeout=120):
         super().__init__(timeout=timeout)
         self.settings = settings
