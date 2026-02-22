@@ -31,13 +31,13 @@ API_KEYS = {
     "pollinations": os.getenv("POLLINATIONS_API_KEY"),  # Optional
     "gemini": os.getenv("GEMINI_API_KEY"),
     "cerebras": os.getenv("CEREBRAS_API_KEY"),
+    "sambanova": os.getenv("SAMBANOVA_API_KEY"),
     "cloudflare": os.getenv("CLOUDFLARE_API_TOKEN"),
     "cloudflare_account": os.getenv("CLOUDFLARE_ACCOUNT_ID"),
     "huggingface": os.getenv("HUGGINGFACE_TOKEN"),
     "cohere": os.getenv("COHERE_API_KEY"),
     "siliconflow": os.getenv("SILICONFLOW_API_KEY"),
     "routeway": os.getenv("ROUTEWAY_API_KEY"),
-    "sambanova": os.getenv("SAMBANOVA_API_KEY"),
     "tavily": os.getenv("TAVILY_API_KEY"),
     "brave": os.getenv("BRAVE_API_KEY"),
     "serper": os.getenv("SERPER_API_KEY"),
@@ -90,43 +90,45 @@ PROVIDERS: Dict[str, Provider] = {
     
     # ==================== GROQ ====================
     # Docs: https://console.groq.com/docs/models
+    # Production IDs from pydantic_ai source (2025-03-31)
+    # Preview IDs from same source + ai-sdk docs
     "groq": Provider(
         name="Groq",
         endpoint="https://api.groq.com/openai/v1/chat/completions",
         rate_limit="30 RPM (70B), 60 RPM (8B)",
         models=[
-            # Compound AI (Web Search + Code Execution)
+            # Compound AI Systems (Web Search + Code Execution)
             Model("compound-beta", "Groq Compound Beta", ["normal", "search"], 131072),
             Model("compound-beta-mini", "Groq Compound Beta Mini", ["normal", "search"], 131072),
-            # Production Chat
+            # Production Chat Models
             Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
             Model("llama-3.1-8b-instant", "Llama 3.1 8B", ["normal"], 131072),
             Model("openai/gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
             Model("openai/gpt-oss-20b", "GPT-OSS 20B", ["normal"], 131072),
-            # Vision / Multimodal
+            # Preview - Vision / Multimodal
             Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick", ["normal", "reasoning"], 131072, vision=True),
             Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["normal", "reasoning"], 131072, vision=True),
-            # Reasoning
+            # Preview - Reasoning
             Model("qwen-qwq-32b", "Qwen QWQ 32B", ["reasoning"], 131072),
             Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
-            # Other
-            Model("moonshotai/kimi-k2-instruct", "Kimi K2", ["normal"], 131072),
-            Model("qwen/qwen3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
-            # Audio (Whisper — separate endpoint, included for reference)
+            # Preview - Chat
+            Model("moonshotai/kimi-k2-instruct-0905", "Kimi K2", ["normal"], 131072),
+            Model("qwen/qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            # Audio (Whisper — separate transcription endpoint)
             Model("whisper-large-v3", "Whisper V3", ["audio"]),
             Model("whisper-large-v3-turbo", "Whisper V3 Turbo", ["audio"]),
         ]
     ),
     
     # ==================== OPENROUTER ====================
-    # Docs: https://openrouter.ai/models?q=free
-    # Verified: https://costgoat.com/pricing/openrouter-free-models (Feb 14, 2026)
+    # Docs: https://openrouter.ai/collections/free-models
+    # Verified: costgoat.com (Feb 14, 2026), apidog.com, teamday.ai (Feb 18, 2026)
     "openrouter": Provider(
         name="OpenRouter",
         endpoint="https://openrouter.ai/api/v1/chat/completions",
         rate_limit="20 RPM, 200 RPD (free tier)",
         models=[
-            # Router
+            # Auto Router
             Model("openrouter/free", "Auto (Free Router)", ["normal"], 200000, vision=True, tools=True),
             # Reasoning
             Model("deepseek/deepseek-r1:free", "DeepSeek R1", ["reasoning"], 164000),
@@ -139,18 +141,18 @@ PROVIDERS: Dict[str, Provider] = {
             # Normal / Chat
             Model("meta-llama/llama-4-maverick:free", "Llama 4 Maverick", ["normal", "reasoning"]),
             Model("meta-llama/llama-4-scout:free", "Llama 4 Scout", ["normal", "reasoning"]),
-            Model("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", ["normal"]),
+            Model("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3 0324", ["normal"]),
             Model("deepseek/deepseek-v3-base:free", "DeepSeek V3 Base", ["normal"]),
             Model("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1", ["normal"]),
             Model("nvidia/llama-3.1-nemotron-nano-8b-v1:free", "Nemotron Nano 8B", ["normal"]),
             Model("qwen/qwen2.5-vl-3b-instruct:free", "Qwen 2.5 VL 3B", ["normal"], vision=True),
             Model("nousresearch/deephermes-3-llama-3-8b-preview:free", "DeepHermes 3 8B", ["normal"]),
-            # New / Verified Feb 2026
+            # New - Verified Feb 2026
             Model("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B", ["normal"], 262144, tools=True),
             Model("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B", ["normal"], 256000, tools=True),
             Model("arcee-ai/trinity-large-preview:free", "Trinity Large Preview", ["normal"], 524288),
             Model("arcee-ai/trinity-mini:free", "Trinity Mini", ["normal"]),
-            # Cloaked / Community models (free, but rotate)
+            # Cloaked / Community models (free, rotate)
             Model("openrouter/optimus-alpha", "Optimus Alpha (Cloaked)", ["normal", "reasoning"]),
             Model("openrouter/quasar-alpha", "Quasar Alpha (Cloaked)", ["normal", "reasoning"]),
         ]
@@ -207,19 +209,41 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== CEREBRAS ====================
-    # Docs: https://inference-docs.cerebras.ai/api-reference/models
-    # Verified: Feb 2026
+    # Docs: https://inference-docs.cerebras.ai/models/overview
+    # Verified via Tambo docs, OpenCode GitHub issue (Jan 26, 2026), AI SDK
     "cerebras": Provider(
         name="Cerebras",
         endpoint="https://api.cerebras.ai/v1/chat/completions",
-        rate_limit="30 RPM, 1M tokens/day",
+        rate_limit="30 RPM, 1M tokens/day (free tier)",
         models=[
-            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 8192),
-            Model("llama-3.3-70b", "Llama 3.3 70B", ["normal"], 8192),
-            Model("qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
-            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 131072),
+            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 128000),
+            Model("llama-3.3-70b", "Llama 3.3 70B", ["normal"], 128000),  # deprecation scheduled
+            Model("qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),  # deprecation scheduled
+            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 262144),
+            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
+            Model("zai-glm-4.6", "Z.ai GLM 4.6", ["normal", "reasoning"], 128000, tools=True),
+            Model("zai-glm-4.7", "Z.ai GLM 4.7", ["normal", "reasoning"], 128000, tools=True),
+        ]
+    ),
+    
+    # ==================== SAMBANOVA ====================
+    # Docs: https://docs.sambanova.ai/cloud/release-notes/overview
+    # Verified: sambanova.ai, Continue docs, liteLLM docs
+    "sambanova": Provider(
+        name="SambaNova",
+        endpoint="https://api.sambanova.ai/v1/chat/completions",
+        rate_limit="Free tier available",
+        models=[
+            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
+            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
+            Model("Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout", ["normal"], 131072, vision=True),
+            Model("Llama-4-Maverick-17B-128E-Instruct", "Llama 4 Maverick", ["normal"], 131072, vision=True),
+            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 16384),
+            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 128000),
+            Model("DeepSeek-V3-0324", "DeepSeek V3 0324", ["normal"], 131072),
+            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            Model("QwQ-32B", "QwQ 32B", ["reasoning"], 32768),
             Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072),
-            Model("zai-glm-4.7", "ZAI GLM 4.7", ["normal", "reasoning"], 131072),
         ]
     ),
     
@@ -295,21 +319,6 @@ PROVIDERS: Dict[str, Provider] = {
             Model("deepseek-r1:free", "DeepSeek R1", ["reasoning"]),
             Model("kimi-k2:free", "Kimi K2", ["normal"]),
             Model("minimax:free", "MiniMax", ["normal"]),
-        ]
-    ),
-    
-    # ==================== SAMBANOVA ====================
-    # Docs: https://community.sambanova.ai/docs
-    "sambanova": Provider(
-        name="SambaNova",
-        endpoint="https://api.sambanova.ai/v1/chat/completions",
-        rate_limit="Free tier available",
-        models=[
-            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
-            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
-            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 131072),
-            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
-            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
         ]
     ),
     
@@ -396,11 +405,11 @@ FALLBACK_CHAINS = {
         ("groq", "llama-3.3-70b-versatile"),
         ("groq", "llama-3.1-8b-instant"),
         ("cerebras", "llama-3.3-70b"),
+        ("sambanova", "Meta-Llama-3.3-70B-Instruct"),
         ("openrouter", "meta-llama/llama-4-scout:free"),
         ("openrouter", "deepseek/deepseek-chat-v3-0324:free"),
         ("pollinations", "openai"),
         ("pollinations", "gemini"),
-        ("sambanova", "Meta-Llama-3.3-70B-Instruct"),
         ("cerebras", "llama3.1-8b"),
         ("cloudflare", "@cf/meta/llama-3.1-8b-instruct"),
         ("puter", "gpt-4o-mini"),
@@ -410,11 +419,11 @@ FALLBACK_CHAINS = {
         ("groq", "qwen-qwq-32b"),
         ("groq", "openai/gpt-oss-120b"),
         ("cerebras", "gpt-oss-120b"),
-        ("cerebras", "qwen-3-32b"),
+        ("cerebras", "zai-glm-4.7"),
+        ("sambanova", "DeepSeek-R1"),
         ("openrouter", "deepseek/deepseek-r1:free"),
         ("openrouter", "deepseek/deepseek-r1-0528:free"),
         ("openrouter", "stepfun/step-3.5-flash:free"),
-        ("sambanova", "DeepSeek-R1"),
         ("pollinations", "perplexity-reasoning"),
         ("routeway", "deepseek-r1:free"),
     ],
