@@ -427,16 +427,16 @@ class CohereProvider(BaseProvider):
 # ============================================================
 
 class SiliconFlowProvider(OpenAICompatibleProvider):
-    """SiliconFlow API - China-based, free tier
-    International: api.siliconflow.com | China: api.siliconflow.cn"""
+    """SiliconFlow API - Free tier available
+    Default: api.siliconflow.com | China: api.siliconflow.cn"""
     
-    def __init__(self, api_key: str, use_international: bool = False):
+    def __init__(self, api_key: str, use_china: bool = False):
         super().__init__(api_key)
         self.name = "siliconflow"
-        if use_international:
-            self.endpoint = "https://api.siliconflow.com/v1/chat/completions"
-        else:
+        if use_china:
             self.endpoint = "https://api.siliconflow.cn/v1/chat/completions"
+        else:
+            self.endpoint = "https://api.siliconflow.com/v1/chat/completions"
 
 
 # ============================================================
@@ -821,11 +821,11 @@ class ProviderFactory:
             if key:
                 provider = CohereProvider(key)
                 
-        elif provider_name == "siliconflow":
+                elif provider_name == "siliconflow":
             key = api_keys.get("siliconflow")
             if key:
-                use_intl = os.environ.get("SILICONFLOW_INTERNATIONAL", "").lower() in ("true", "1", "yes")
-                provider = SiliconFlowProvider(key, use_international=use_intl)
+                use_china = os.environ.get("SILICONFLOW_CHINA", "").lower() in ("true", "1", "yes")
+                provider = SiliconFlowProvider(key, use_china=use_china)
                 
         elif provider_name == "routeway":
             key = api_keys.get("routeway")
