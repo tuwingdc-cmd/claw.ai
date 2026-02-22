@@ -1,6 +1,7 @@
 """
 All AI Provider Implementations
 Single file containing all provider classes
+— Verified Feb 22, 2026 —
 """
 
 import aiohttp
@@ -11,12 +12,12 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
+
 # Providers yang support tool calling
-TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "puter"}
+TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova", "puter"}
 
 def supports_tool_calling(provider_name: str) -> bool:
     return provider_name in TOOL_CAPABLE_PROVIDERS
-
 
 
 # ============================================================
@@ -70,7 +71,7 @@ class BaseProvider(ABC):
 # ============================================================
 
 class OpenAICompatibleProvider(BaseProvider):
-    """Base class for OpenAI-compatible APIs (Groq, OpenRouter, etc.)"""
+    """Base class for OpenAI-compatible APIs (Groq, OpenRouter, Cerebras, SambaNova, etc.)"""
     
     async def chat(
         self,
@@ -211,12 +212,24 @@ class PollinationsProvider(OpenAICompatibleProvider):
 # ============================================================
 
 class CerebrasProvider(OpenAICompatibleProvider):
-    """Cerebras API - 1M tokens/day free"""
+    """Cerebras API - Ultra fast inference on Wafer-Scale Engines"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.name = "cerebras"
         self.endpoint = "https://api.cerebras.ai/v1/chat/completions"
+
+# ============================================================
+# SAMBANOVA PROVIDER
+# ============================================================
+
+class SambanovaProvider(OpenAICompatibleProvider):
+    """SambaNova Cloud - Fast inference on RDU hardware"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "sambanova"
+        self.endpoint = "https://api.sambanova.ai/v1/chat/completions"
 
 # ============================================================
 # HUGGINGFACE PROVIDER
@@ -628,9 +641,6 @@ class PuterProvider(BaseProvider):
                 error="Puter API token not provided"
             )
         
-        # Puter uses driver-based API
-        # Reference: https://github.com/xtekky/gpt4free/issues/2928
-        
         # Determine driver based on model
         if model.startswith("claude"):
             driver = "anthropic"
@@ -738,8 +748,6 @@ class PuterProvider(BaseProvider):
         return self.api_token is not None
 
 
-# Keep old class name for compatibility
-
 # ============================================================
 # PROVIDER FACTORY
 # ============================================================
@@ -781,6 +789,11 @@ class ProviderFactory:
             key = api_keys.get("cerebras")
             if key:
                 provider = CerebrasProvider(key)
+        
+        elif provider_name == "sambanova":
+            key = api_keys.get("sambanova")
+            if key:
+                provider = SambanovaProvider(key)
                 
         elif provider_name == "cloudflare":
             key = api_keys.get("cloudflare")
