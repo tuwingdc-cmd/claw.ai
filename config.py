@@ -1,6 +1,7 @@
 """
 Configuration & Provider Registry
 All providers, models, and defaults in one place
+— Verified against official docs: Feb 22, 2026 —
 """
 
 import os
@@ -36,12 +37,14 @@ API_KEYS = {
     "cohere": os.getenv("COHERE_API_KEY"),
     "siliconflow": os.getenv("SILICONFLOW_API_KEY"),
     "routeway": os.getenv("ROUTEWAY_API_KEY"),
+    "sambanova": os.getenv("SAMBANOVA_API_KEY"),
     "tavily": os.getenv("TAVILY_API_KEY"),
     "brave": os.getenv("BRAVE_API_KEY"),
     "serper": os.getenv("SERPER_API_KEY"),
     
     # Puter.com - Free 200+ AI Models (create account at puter.com)
-    "puter_api_key": os.getenv("PUTER_API_KEY"),}
+    "puter_api_key": os.getenv("PUTER_API_KEY"),
+}
 
 # ============================================================
 # DEFAULTS
@@ -80,72 +83,81 @@ class Provider:
     rate_limit: str = ""
 
 # ------------------------------------------------------------
-# ALL PROVIDERS (Verified Feb 2026)
+# ALL PROVIDERS (Verified Feb 22, 2026)
 # ------------------------------------------------------------
 
 PROVIDERS: Dict[str, Provider] = {
     
     # ==================== GROQ ====================
+    # Docs: https://console.groq.com/docs/models
     "groq": Provider(
         name="Groq",
         endpoint="https://api.groq.com/openai/v1/chat/completions",
-        rate_limit="100 RPM",
+        rate_limit="30 RPM (70B), 60 RPM (8B)",
         models=[
-            # Production
-            Model("groq/compound", "Groq Compound (Web Search)", ["normal", "search"], 131072),
-                Model("groq/compound-mini", "Groq Compound Mini (Fast)", ["normal", "search"], 131072),
-                Model("compound-beta", "Groq Compound Beta", ["normal", "search"], 131072),
-                Model("compound-beta-mini", "Groq Compound Beta Mini", ["normal", "search"], 131072),
-                Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
+            # Compound AI (Web Search + Code Execution)
+            Model("compound-beta", "Groq Compound Beta", ["normal", "search"], 131072),
+            Model("compound-beta-mini", "Groq Compound Beta Mini", ["normal", "search"], 131072),
+            # Production Chat
+            Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
             Model("llama-3.1-8b-instant", "Llama 3.1 8B", ["normal"], 131072),
             Model("openai/gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
             Model("openai/gpt-oss-20b", "GPT-OSS 20B", ["normal"], 131072),
-            # Preview
-            Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick", ["reasoning"], 131072, vision=True),
-            Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["reasoning"], 131072, vision=True),
-            Model("qwen/qwen3-32b", "Qwen QWQ 32B", ["reasoning"], 32768),
-            Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill", ["reasoning"], 32768),
-            Model("moonshotai/kimi-k2-instruct-0905", "Kimi K2", ["normal"], 131072),
-            Model("qwen/qwen3-32b", "Qwen 3 32B", ["normal"], 32768),
-            # Audio
+            # Vision / Multimodal
+            Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick", ["normal", "reasoning"], 131072, vision=True),
+            Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["normal", "reasoning"], 131072, vision=True),
+            # Reasoning
+            Model("qwen-qwq-32b", "Qwen QWQ 32B", ["reasoning"], 131072),
+            Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
+            # Other
+            Model("moonshotai/kimi-k2-instruct", "Kimi K2", ["normal"], 131072),
+            Model("qwen/qwen3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            # Audio (Whisper — separate endpoint, included for reference)
             Model("whisper-large-v3", "Whisper V3", ["audio"]),
             Model("whisper-large-v3-turbo", "Whisper V3 Turbo", ["audio"]),
         ]
     ),
     
     # ==================== OPENROUTER ====================
+    # Docs: https://openrouter.ai/models?q=free
+    # Verified: https://costgoat.com/pricing/openrouter-free-models (Feb 14, 2026)
     "openrouter": Provider(
         name="OpenRouter",
         endpoint="https://openrouter.ai/api/v1/chat/completions",
-        rate_limit="20 RPM, 200 RPD",
+        rate_limit="20 RPM, 200 RPD (free tier)",
         models=[
             # Router
-            Model("openrouter/free", "Auto (Free)", ["normal"]),
+            Model("openrouter/free", "Auto (Free Router)", ["normal"], 200000, vision=True, tools=True),
             # Reasoning
             Model("deepseek/deepseek-r1:free", "DeepSeek R1", ["reasoning"], 164000),
             Model("deepseek/deepseek-r1-0528:free", "DeepSeek R1 0528", ["reasoning"], 164000),
             Model("deepseek/deepseek-r1-zero:free", "DeepSeek R1 Zero", ["reasoning"]),
-            Model("qwen/qwen3-coder:free", "Qwen3 Coder", ["reasoning", "normal"], 262144, tools=True),
-            Model("stepfun/step-3.5-flash:free", "Step 3.5 Flash", ["reasoning"], 262144),
+            Model("qwen/qwen3-coder:free", "Qwen3 Coder 480B", ["reasoning", "normal"], 262144, tools=True),
+            Model("stepfun/step-3.5-flash:free", "Step 3.5 Flash", ["reasoning"], 256000, tools=True),
             Model("google/gemini-2.5-pro-exp-03-25:free", "Gemini 2.5 Pro Exp", ["reasoning"]),
             Model("moonshotai/kimi-vl-a3b-thinking:free", "Kimi VL Thinking", ["reasoning"], vision=True),
-            # Normal
+            # Normal / Chat
             Model("meta-llama/llama-4-maverick:free", "Llama 4 Maverick", ["normal", "reasoning"]),
             Model("meta-llama/llama-4-scout:free", "Llama 4 Scout", ["normal", "reasoning"]),
-            Model("deepseek/deepseek-v3-base:free", "DeepSeek V3", ["normal"]),
             Model("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3", ["normal"]),
+            Model("deepseek/deepseek-v3-base:free", "DeepSeek V3 Base", ["normal"]),
             Model("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1", ["normal"]),
             Model("nvidia/llama-3.1-nemotron-nano-8b-v1:free", "Nemotron Nano 8B", ["normal"]),
             Model("qwen/qwen2.5-vl-3b-instruct:free", "Qwen 2.5 VL 3B", ["normal"], vision=True),
-            # New Feb 2026
+            Model("nousresearch/deephermes-3-llama-3-8b-preview:free", "DeepHermes 3 8B", ["normal"]),
+            # New / Verified Feb 2026
             Model("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B", ["normal"], 262144, tools=True),
-            Model("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B", ["normal"], 262144, tools=True),
-            Model("arcee-ai/trinity-large-preview:free", "Trinity Large", ["normal"], 524288),
-            Model("zhipuai/glm-4.5-air:free", "GLM 4.5 Air", ["normal", "reasoning"]),
+            Model("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B", ["normal"], 256000, tools=True),
+            Model("arcee-ai/trinity-large-preview:free", "Trinity Large Preview", ["normal"], 524288),
+            Model("arcee-ai/trinity-mini:free", "Trinity Mini", ["normal"]),
+            # Cloaked / Community models (free, but rotate)
+            Model("openrouter/optimus-alpha", "Optimus Alpha (Cloaked)", ["normal", "reasoning"]),
+            Model("openrouter/quasar-alpha", "Quasar Alpha (Cloaked)", ["normal", "reasoning"]),
         ]
     ),
     
     # ==================== POLLINATIONS ====================
+    # Left as default per user request
     "pollinations": Provider(
         name="Pollinations",
         endpoint="https://gen.pollinations.ai/v1/chat/completions",
@@ -178,35 +190,41 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== GEMINI ====================
+    # Docs: https://ai.google.dev/gemini-api/docs/models
     "gemini": Provider(
         name="Google Gemini",
         endpoint="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         auth_header="x-goog-api-key",
         auth_prefix="",
-        rate_limit="5-15 RPM, 100-1000 RPD",
+        rate_limit="5-15 RPM, 100-1000 RPD (free tier)",
         models=[
-            Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"]),
-            Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"]),
-            Model("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", ["normal"]),
-            Model("gemini-3-flash-preview", "Gemini 3 Flash", ["normal", "reasoning"]),
+            Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
+            Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
+            Model("gemini-2.5-flash-lite-preview-06-17", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
             Model("gemma-3-27b-it", "Gemma 3 27B", ["normal"]),
             Model("gemma-2-9b-it", "Gemma 2 9B", ["normal"]),
         ]
     ),
     
     # ==================== CEREBRAS ====================
+    # Docs: https://inference-docs.cerebras.ai/api-reference/models
+    # Verified: Feb 2026
     "cerebras": Provider(
         name="Cerebras",
         endpoint="https://api.cerebras.ai/v1/chat/completions",
-        rate_limit="1M tokens/day",
+        rate_limit="30 RPM, 1M tokens/day",
         models=[
-            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"]),
-            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"]),
-            Model("glm-4.7", "GLM 4.7", ["normal", "reasoning"]),
+            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 8192),
+            Model("llama-3.3-70b", "Llama 3.3 70B", ["normal"], 8192),
+            Model("qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 131072),
+            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072),
+            Model("zai-glm-4.7", "ZAI GLM 4.7", ["normal", "reasoning"], 131072),
         ]
     ),
     
     # ==================== CLOUDFLARE ====================
+    # Docs: https://developers.cloudflare.com/workers-ai/models/
     "cloudflare": Provider(
         name="Cloudflare",
         endpoint="https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
@@ -223,10 +241,11 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== HUGGINGFACE ====================
+    # Docs: https://huggingface.co/docs/api-inference
     "huggingface": Provider(
         name="HuggingFace",
         endpoint="https://router.huggingface.co/v1/chat/completions",
-        rate_limit="~50 calls/day",
+        rate_limit="~50 calls/day (free)",
         models=[
             Model("deepseek-ai/DeepSeek-R1", "DeepSeek R1", ["reasoning"]),
             Model("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528", ["reasoning"]),
@@ -239,12 +258,13 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== COHERE ====================
+    # Docs: https://docs.cohere.com/docs/models
     "cohere": Provider(
         name="Cohere",
         endpoint="https://api.cohere.ai/v2/chat",
-        rate_limit="1000 calls/month",
+        rate_limit="1000 calls/month (trial)",
         models=[
-            Model("command-a", "Command A", ["normal"]),
+            Model("command-a-08-2025", "Command A", ["normal"]),
             Model("command-r-plus-08-2024", "Command R+", ["normal", "search"]),
             Model("command-r-08-2024", "Command R", ["normal"]),
             Model("command-r7b-12-2024", "Command R 7B", ["normal"]),
@@ -252,6 +272,7 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== SILICONFLOW ====================
+    # Docs: https://docs.siliconflow.cn/
     "siliconflow": Provider(
         name="SiliconFlow",
         endpoint="https://api.siliconflow.cn/v1/chat/completions",
@@ -274,6 +295,21 @@ PROVIDERS: Dict[str, Provider] = {
             Model("deepseek-r1:free", "DeepSeek R1", ["reasoning"]),
             Model("kimi-k2:free", "Kimi K2", ["normal"]),
             Model("minimax:free", "MiniMax", ["normal"]),
+        ]
+    ),
+    
+    # ==================== SAMBANOVA ====================
+    # Docs: https://community.sambanova.ai/docs
+    "sambanova": Provider(
+        name="SambaNova",
+        endpoint="https://api.sambanova.ai/v1/chat/completions",
+        rate_limit="Free tier available",
+        models=[
+            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
+            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
+            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 131072),
+            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
+            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
         ]
     ),
     
@@ -321,7 +357,7 @@ PROVIDERS: Dict[str, Provider] = {
 SEARCH_PROVIDERS = {
     "duckduckgo": {
         "name": "DuckDuckGo",
-        "type": "library",  # Uses duckduckgo-search package
+        "type": "library",
         "rate_limit": "unlimited",
         "requires_key": False,
     },
@@ -359,23 +395,27 @@ FALLBACK_CHAINS = {
     "normal": [
         ("groq", "llama-3.3-70b-versatile"),
         ("groq", "llama-3.1-8b-instant"),
+        ("cerebras", "llama-3.3-70b"),
         ("openrouter", "meta-llama/llama-4-scout:free"),
         ("openrouter", "deepseek/deepseek-chat-v3-0324:free"),
         ("pollinations", "openai"),
         ("pollinations", "gemini"),
+        ("sambanova", "Meta-Llama-3.3-70B-Instruct"),
         ("cerebras", "llama3.1-8b"),
         ("cloudflare", "@cf/meta/llama-3.1-8b-instruct"),
         ("puter", "gpt-4o-mini"),
     ],
     "reasoning": [
         ("groq", "deepseek-r1-distill-llama-70b"),
-        ("groq", "qwen/qwen3-32b"),
+        ("groq", "qwen-qwq-32b"),
         ("groq", "openai/gpt-oss-120b"),
+        ("cerebras", "gpt-oss-120b"),
+        ("cerebras", "qwen-3-32b"),
         ("openrouter", "deepseek/deepseek-r1:free"),
         ("openrouter", "deepseek/deepseek-r1-0528:free"),
         ("openrouter", "stepfun/step-3.5-flash:free"),
+        ("sambanova", "DeepSeek-R1"),
         ("pollinations", "perplexity-reasoning"),
-        ("cerebras", "gpt-oss-120b"),
         ("routeway", "deepseek-r1:free"),
     ],
     "search": [
@@ -441,11 +481,10 @@ def is_provider_available(provider_name: str) -> bool:
     provider = get_provider(provider_name)
     if not provider:
         return False
-    # MLVOCA and Pollinations (anonymous) don't need keys
     if provider_name in ["mlvoca", "puter"]:
         return True
     if provider_name == "pollinations":
-        return True  # Works without key (anonymous mode)
+        return True
     return bool(get_api_key(provider_name))
 
 def list_available_providers() -> List[str]:
