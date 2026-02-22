@@ -282,9 +282,9 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== SILICONFLOW ====================
-    "siliconflow": Provider(
+        "siliconflow": Provider(
         name="SiliconFlow",
-        endpoint="https://api.siliconflow.cn/v1/chat/completions",
+        endpoint="https://api.siliconflow.com/v1/chat/completions",
         rate_limit="100 RPD (free models), varies (paid)",
         models=[
             # Free Models
