@@ -4,6 +4,7 @@ Single file containing all provider classes
 — Verified Feb 22, 2026 —
 """
 
+import os
 import aiohttp
 import asyncio
 import logging
@@ -52,26 +53,24 @@ class BaseProvider(ABC):
         model: str,
         **kwargs
     ) -> AIResponse:
-        """Send chat completion request"""
         pass
     
     async def health_check(self) -> bool:
-        """Check if provider is available"""
         return self.api_key is not None or self.name in ["pollinations", "mlvoca", "puter"]
     
     def _build_headers(self) -> Dict[str, str]:
-        """Build authorization headers"""
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+
 # ============================================================
-# OPENAI-COMPATIBLE PROVIDER (Base for most providers)
+# OPENAI-COMPATIBLE PROVIDER
 # ============================================================
 
 class OpenAICompatibleProvider(BaseProvider):
-    """Base class for OpenAI-compatible APIs (Groq, OpenRouter, Cerebras, SambaNova, etc.)"""
+    """Base class for OpenAI-compatible APIs"""
     
     async def chat(
         self,
@@ -81,8 +80,6 @@ class OpenAICompatibleProvider(BaseProvider):
         max_tokens: int = 4096,
         **kwargs
     ) -> AIResponse:
-        """Send chat request to OpenAI-compatible endpoint"""
-        
         import time
         start = time.time()
         
@@ -93,7 +90,6 @@ class OpenAICompatibleProvider(BaseProvider):
             "max_tokens": max_tokens,
         }
 
-        # Inject tools jika disediakan (untuk tool calling)
         if kwargs.get("tools"):
             payload["tools"] = kwargs["tools"]
             payload["tool_choice"] = kwargs.get("tool_choice", "auto")
@@ -116,45 +112,33 @@ class OpenAICompatibleProvider(BaseProvider):
                         tokens = data.get("usage", {}).get("total_tokens", 0)
                         
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            tokens_used=tokens,
-                            latency=latency,
-                            tool_calls=tool_calls,
-                            raw=data
+                            success=True, content=content,
+                            provider=self.name, model=model,
+                            tokens_used=tokens, latency=latency,
+                            tool_calls=tool_calls, raw=data
                         )
                     else:
                         error_text = await resp.text()
                         log.warning(f"{self.name} error {resp.status}: {error_text[:200]}")
-                        
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
+                            success=False, content="",
+                            provider=self.name, model=model,
                             error=f"HTTP {resp.status}: {error_text[:100]}",
                             latency=latency
                         )
                         
         except asyncio.TimeoutError:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error="Request timeout"
+                success=False, content="", provider=self.name,
+                model=model, error="Request timeout"
             )
         except Exception as e:
             log.error(f"{self.name} exception: {e}")
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="", provider=self.name,
+                model=model, error=str(e)
             )
+
 
 # ============================================================
 # GROQ PROVIDER
@@ -168,12 +152,13 @@ class GroqProvider(OpenAICompatibleProvider):
         self.name = "groq"
         self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
 
+
 # ============================================================
-# OPENROUTER PROVIDER
+# OPENROUTER PROVIDER (with 404 auto-fallback)
 # ============================================================
 
 class OpenRouterProvider(OpenAICompatibleProvider):
-    """OpenRouter API - Multi-model gateway"""
+    """OpenRouter API - Multi-model gateway with auto-fallback on 404"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
@@ -185,13 +170,133 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         headers["HTTP-Referer"] = "https://discord-bot.local"
         headers["X-Title"] = "Discord AI Bot"
         return headers
+    
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs
+    ) -> AIResponse:
+        import time
+        start = time.time()
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        
+        # Only send tools for supported models
+        if kwargs.get("tools"):
+            tools_safe = {
+                "openrouter/free",
+                "qwen/qwen3-coder:free",
+                "stepfun/step-3.5-flash:free",
+                "qwen/qwen3-next-80b-a3b-instruct:free",
+                "nvidia/nemotron-3-nano-30b-a3b:free",
+            }
+            if model in tools_safe:
+                payload["tools"] = kwargs["tools"]
+                payload["tool_choice"] = kwargs.get("tool_choice", "auto")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.endpoint,
+                    headers=self._build_headers(),
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=60)
+                ) as resp:
+                    latency = time.time() - start
+                    
+                    if resp.status == 200:
+                        data = await resp.json()
+                        msg = data["choices"][0].get("message", {})
+                        content = msg.get("content") or ""
+                        tool_calls = msg.get("tool_calls")
+                        tokens = data.get("usage", {}).get("total_tokens", 0)
+                        
+                        return AIResponse(
+                            success=True, content=content,
+                            provider=self.name, model=model,
+                            tokens_used=tokens, latency=latency,
+                            tool_calls=tool_calls, raw=data
+                        )
+                    
+                    # 404: Model deprecated → fallback to openrouter/free
+                    elif resp.status == 404 and model != "openrouter/free":
+                        error_text = await resp.text()
+                        log.warning(f"OpenRouter 404 for {model}, fallback to openrouter/free")
+                        
+                        payload["model"] = "openrouter/free"
+                        async with session.post(
+                            self.endpoint,
+                            headers=self._build_headers(),
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=60)
+                        ) as retry:
+                            retry_latency = time.time() - start
+                            if retry.status == 200:
+                                data = await retry.json()
+                                msg = data["choices"][0].get("message", {})
+                                content = msg.get("content") or ""
+                                tokens = data.get("usage", {}).get("total_tokens", 0)
+                                return AIResponse(
+                                    success=True, content=content,
+                                    provider=self.name, model="openrouter/free",
+                                    tokens_used=tokens, latency=retry_latency, raw=data
+                                )
+                            else:
+                                return AIResponse(
+                                    success=False, content="",
+                                    provider=self.name, model=model,
+                                    error=f"Fallback failed: HTTP {retry.status}",
+                                    latency=retry_latency
+                                )
+                    
+                    # 429: Rate limited
+                    elif resp.status == 429:
+                        error_text = await resp.text()
+                        log.warning(f"OpenRouter 429 for {model}")
+                        return AIResponse(
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error="Rate limited (429). Try again later.",
+                            latency=latency
+                        )
+                    
+                    else:
+                        error_text = await resp.text()
+                        log.warning(f"OpenRouter error {resp.status}: {error_text[:200]}")
+                        return AIResponse(
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}: {error_text[:100]}",
+                            latency=latency
+                        )
+        
+        except asyncio.TimeoutError:
+            return AIResponse(
+                success=False, content="", provider=self.name,
+                model=model, error="Request timeout"
+            )
+        except Exception as e:
+            log.error(f"OpenRouter exception: {e}")
+            return AIResponse(
+                success=False, content="", provider=self.name,
+                model=model, error=str(e)
+            )
+
 
 # ============================================================
 # POLLINATIONS PROVIDER
 # ============================================================
 
 class PollinationsProvider(OpenAICompatibleProvider):
-    """Pollinations API - Free AI gateway (works with/without key)"""
+    """Pollinations API - Free AI gateway"""
     
     def __init__(self, api_key: Optional[str] = None):
         super().__init__(api_key)
@@ -207,17 +312,19 @@ class PollinationsProvider(OpenAICompatibleProvider):
     async def health_check(self) -> bool:
         return True
 
+
 # ============================================================
 # CEREBRAS PROVIDER
 # ============================================================
 
 class CerebrasProvider(OpenAICompatibleProvider):
-    """Cerebras API - Ultra fast inference on Wafer-Scale Engines"""
+    """Cerebras API - Ultra fast inference"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.name = "cerebras"
         self.endpoint = "https://api.cerebras.ai/v1/chat/completions"
+
 
 # ============================================================
 # SAMBANOVA PROVIDER
@@ -231,6 +338,7 @@ class SambanovaProvider(OpenAICompatibleProvider):
         self.name = "sambanova"
         self.endpoint = "https://api.sambanova.ai/v1/chat/completions"
 
+
 # ============================================================
 # HUGGINGFACE PROVIDER
 # ============================================================
@@ -242,6 +350,7 @@ class HuggingFaceProvider(OpenAICompatibleProvider):
         super().__init__(api_key)
         self.name = "huggingface"
         self.endpoint = "https://router.huggingface.co/v1/chat/completions"
+
 
 # ============================================================
 # COHERE PROVIDER
@@ -271,10 +380,7 @@ class CohereProvider(BaseProvider):
             role = "assistant" if msg["role"] == "assistant" else "user"
             if msg["role"] == "system":
                 role = "system"
-            cohere_messages.append({
-                "role": role,
-                "content": msg["content"]
-            })
+            cohere_messages.append({"role": role, "content": msg["content"]})
         
         payload = {
             "model": model,
@@ -292,55 +398,46 @@ class CohereProvider(BaseProvider):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.endpoint,
-                    headers=headers,
-                    json=payload,
+                    self.endpoint, headers=headers, json=payload,
                     timeout=aiohttp.ClientTimeout(total=60)
                 ) as resp:
                     latency = time.time() - start
-                    
                     if resp.status == 200:
                         data = await resp.json()
                         content = data["message"]["content"][0]["text"]
-                        
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            latency=latency
+                            success=True, content=content,
+                            provider=self.name, model=model, latency=latency
                         )
                     else:
-                        error_text = await resp.text()
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
-                            error=f"HTTP {resp.status}",
-                            latency=latency
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}", latency=latency
                         )
-                        
         except Exception as e:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="",
+                provider=self.name, model=model, error=str(e)
             )
+
 
 # ============================================================
 # SILICONFLOW PROVIDER
 # ============================================================
 
 class SiliconFlowProvider(OpenAICompatibleProvider):
-    """SiliconFlow API - China-based, free tier"""
+    """SiliconFlow API - China-based, free tier
+    International: api.siliconflow.com | China: api.siliconflow.cn"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, use_international: bool = False):
         super().__init__(api_key)
         self.name = "siliconflow"
-        self.endpoint = "https://api.siliconflow.cn/v1/chat/completions"
+        if use_international:
+            self.endpoint = "https://api.siliconflow.com/v1/chat/completions"
+        else:
+            self.endpoint = "https://api.siliconflow.cn/v1/chat/completions"
+
 
 # ============================================================
 # ROUTEWAY PROVIDER
@@ -354,12 +451,13 @@ class RoutewayProvider(OpenAICompatibleProvider):
         self.name = "routeway"
         self.endpoint = "https://api.routeway.ai/v1/chat/completions"
 
+
 # ============================================================
 # GEMINI PROVIDER
 # ============================================================
 
 class GeminiProvider(BaseProvider):
-    """Google Gemini API - Different format"""
+    """Google Gemini API"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
@@ -401,9 +499,7 @@ class GeminiProvider(BaseProvider):
         }
         
         if system_instruction:
-            payload["systemInstruction"] = {
-                "parts": [{"text": system_instruction}]
-            }
+            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -414,37 +510,25 @@ class GeminiProvider(BaseProvider):
                     timeout=aiohttp.ClientTimeout(total=60)
                 ) as resp:
                     latency = time.time() - start
-                    
                     if resp.status == 200:
                         data = await resp.json()
                         content = data["candidates"][0]["content"]["parts"][0]["text"]
-                        
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            latency=latency
+                            success=True, content=content,
+                            provider=self.name, model=model, latency=latency
                         )
                     else:
-                        error_text = await resp.text()
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
-                            error=f"HTTP {resp.status}",
-                            latency=latency
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}", latency=latency
                         )
-                        
         except Exception as e:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="",
+                provider=self.name, model=model, error=str(e)
             )
+
 
 # ============================================================
 # CLOUDFLARE PROVIDER
@@ -471,12 +555,7 @@ class CloudflareProvider(BaseProvider):
         start = time.time()
         
         endpoint = f"{self.base_url}/{model}"
-        
-        payload = {
-            "messages": messages,
-            "max_tokens": max_tokens,
-        }
-        
+        payload = {"messages": messages, "max_tokens": max_tokens}
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
@@ -485,135 +564,90 @@ class CloudflareProvider(BaseProvider):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    endpoint,
-                    headers=headers,
-                    json=payload,
+                    endpoint, headers=headers, json=payload,
                     timeout=aiohttp.ClientTimeout(total=60)
                 ) as resp:
                     latency = time.time() - start
-                    
                     if resp.status == 200:
                         data = await resp.json()
                         content = data["result"]["response"]
-                        
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            latency=latency
+                            success=True, content=content,
+                            provider=self.name, model=model, latency=latency
                         )
                     else:
-                        error_text = await resp.text()
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
-                            error=f"HTTP {resp.status}",
-                            latency=latency
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}", latency=latency
                         )
-                        
         except Exception as e:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="",
+                provider=self.name, model=model, error=str(e)
             )
 
+
 # ============================================================
-# MLVOCA PROVIDER (No API Key)
+# MLVOCA PROVIDER
 # ============================================================
 
 class MLVOCAProvider(BaseProvider):
-    """MLVOCA API - Completely free, no key needed"""
+    """MLVOCA API - Free, no key needed"""
     
     def __init__(self):
         super().__init__(None)
         self.name = "mlvoca"
         self.endpoint = "https://mlvoca.com/api/generate"
     
-    async def chat(
-        self,
-        messages: List[Dict[str, str]],
-        model: str,
-        **kwargs
-    ) -> AIResponse:
+    async def chat(self, messages: List[Dict[str, str]], model: str, **kwargs) -> AIResponse:
         import time
         start = time.time()
         
         prompt = messages[-1]["content"] if messages else ""
-        
         for msg in messages:
             if msg["role"] == "system":
                 prompt = f"{msg['content']}\n\n{prompt}"
                 break
         
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False
-        }
+        payload = {"model": model, "prompt": prompt, "stream": False}
         
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.endpoint,
-                    json=payload,
+                    self.endpoint, json=payload,
                     timeout=aiohttp.ClientTimeout(total=60)
                 ) as resp:
                     latency = time.time() - start
-                    
                     if resp.status == 200:
                         data = await resp.json()
                         content = data.get("response", "")
-                        
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            latency=latency
+                            success=True, content=content,
+                            provider=self.name, model=model, latency=latency
                         )
                     else:
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
-                            error=f"HTTP {resp.status}",
-                            latency=latency
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}", latency=latency
                         )
-                        
         except Exception as e:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="",
+                provider=self.name, model=model, error=str(e)
             )
     
     async def health_check(self) -> bool:
         return True
 
+
 # ============================================================
-# PUTER PROVIDER - FREE 200+ AI Models!
+# PUTER PROVIDER
 # ============================================================
 
 class PuterProvider(BaseProvider):
-    """
-    Puter.com API - Free access to 200+ AI models!
-    Uses API Token (get from: puter login --save)
-    
-    Models format examples:
-    - gpt-4o, gpt-4o-mini, gpt-4.1-nano
-    - claude-sonnet-4, claude-3-5-sonnet  
-    - google/gemini-2.5-flash, deepseek/deepseek-r1
-    - x-ai/grok-3, meta-llama/llama-3.3-70b-instruct
-    """
+    """Puter.com API - Free 200+ AI models"""
     
     def __init__(self, api_token: str = None):
         super().__init__(api_token)
@@ -634,14 +668,11 @@ class PuterProvider(BaseProvider):
         
         if not self.api_token:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error="Puter API token not provided"
+                success=False, content="", provider=self.name,
+                model=model, error="Puter API token not provided"
             )
         
-        # Determine driver based on model
+        # Determine driver
         if model.startswith("claude"):
             driver = "anthropic"
         elif model.startswith("google/") or model.startswith("gemini"):
@@ -657,18 +688,14 @@ class PuterProvider(BaseProvider):
         elif model.startswith("perplexity"):
             driver = "perplexity"
         else:
-            driver = "openai-completion"  # Default for GPT models
+            driver = "openai-completion"
         
         payload = {
             "interface": "puter-chat-completion",
             "driver": driver,
             "test_mode": False,
             "method": "complete",
-            "args": {
-                "messages": messages,
-                "model": model,
-                "stream": False,
-            }
+            "args": {"messages": messages, "model": model, "stream": False}
         }
         
         headers = {
@@ -681,16 +708,13 @@ class PuterProvider(BaseProvider):
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.base_url}/drivers/call",
-                    headers=headers,
-                    json=payload,
+                    headers=headers, json=payload,
                     timeout=aiohttp.ClientTimeout(total=90)
                 ) as resp:
                     latency = time.time() - start
                     
                     if resp.status == 200:
                         data = await resp.json()
-                        
-                        # Extract content from Puter response
                         try:
                             if "result" in data:
                                 result = data["result"]
@@ -708,40 +732,28 @@ class PuterProvider(BaseProvider):
                             content = str(data)
                         
                         return AIResponse(
-                            success=True,
-                            content=content,
-                            provider=self.name,
-                            model=model,
-                            latency=latency
+                            success=True, content=content,
+                            provider=self.name, model=model, latency=latency
                         )
                     else:
                         error_text = await resp.text()
-                        log.warning(f"Puter error {resp.status}: {error_text[:200]}")
                         return AIResponse(
-                            success=False,
-                            content="",
-                            provider=self.name,
-                            model=model,
+                            success=False, content="",
+                            provider=self.name, model=model,
                             error=f"HTTP {resp.status}: {error_text[:100]}",
                             latency=latency
                         )
                         
         except asyncio.TimeoutError:
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error="Request timeout"
+                success=False, content="", provider=self.name,
+                model=model, error="Request timeout"
             )
         except Exception as e:
             log.error(f"Puter exception: {e}")
             return AIResponse(
-                success=False,
-                content="",
-                provider=self.name,
-                model=model,
-                error=str(e)
+                success=False, content="", provider=self.name,
+                model=model, error=str(e)
             )
     
     async def health_check(self) -> bool:
@@ -759,8 +771,6 @@ class ProviderFactory:
     
     @classmethod
     def get(cls, provider_name: str, api_keys: Dict[str, str]) -> Optional[BaseProvider]:
-        """Get or create provider instance"""
-        
         if provider_name in cls._instances:
             return cls._instances[provider_name]
         
@@ -814,7 +824,8 @@ class ProviderFactory:
         elif provider_name == "siliconflow":
             key = api_keys.get("siliconflow")
             if key:
-                provider = SiliconFlowProvider(key)
+                use_intl = os.environ.get("SILICONFLOW_INTERNATIONAL", "").lower() in ("true", "1", "yes")
+                provider = SiliconFlowProvider(key, use_international=use_intl)
                 
         elif provider_name == "routeway":
             key = api_keys.get("routeway")
@@ -836,5 +847,4 @@ class ProviderFactory:
     
     @classmethod
     def clear_cache(cls):
-        """Clear cached instances"""
         cls._instances.clear()
