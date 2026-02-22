@@ -821,7 +821,7 @@ class ProviderFactory:
             if key:
                 provider = CohereProvider(key)
                 
-                elif provider_name == "siliconflow":
+         elif provider_name == "siliconflow":
             key = api_keys.get("siliconflow")
             if key:
                 use_china = os.environ.get("SILICONFLOW_CHINA", "").lower() in ("true", "1", "yes")
