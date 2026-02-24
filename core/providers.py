@@ -824,8 +824,7 @@ class ProviderFactory:
         elif provider_name == "siliconflow":
             key = api_keys.get("siliconflow")
             if key:
-                provider = SiliconFlowProvider(key, use_china=os.environ.get("SILICONFLOW_CHINA", "").lower() in ("true", "1", "yes"))
-                provider = SiliconFlowProvider(key, use_china=use_china)
+                provider = SiliconFlowProvider(key)
                 
         elif provider_name == "routeway":
             key = api_keys.get("routeway")
