@@ -195,7 +195,8 @@ PROVIDERS: Dict[str, Provider] = {
         models=[
             Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
             Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
-            Model("gemini-2.5-flash-lite-preview-06-17", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
+            # Di PROVIDERS["gemini"].models:
+            Model("gemini-2.5-flash-lite-preview-09-2025", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
             Model("gemma-3-27b-it", "Gemma 3 27B", ["normal"]),
             Model("gemma-2-9b-it", "Gemma 2 9B", ["normal"]),
         ]
