@@ -512,7 +512,7 @@ class GeminiProvider(BaseProvider):
                     latency = time.time() - start
                     if resp.status == 200:
                         data = await resp.json()
-                        content = data["candidates"][0]["content"]["parts"][0]["text"]
+                        content = "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"])
                         return AIResponse(
                             success=True, content=content,
                             provider=self.name, model=model, latency=latency
