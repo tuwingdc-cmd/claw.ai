@@ -80,9 +80,9 @@ class Provider:
     free_tier: bool = True
     rate_limit: str = ""
 
-# ------------------------------------------------------------
-# ALL PROVIDERS (Verified Feb 22, 2026)
-# ------------------------------------------------------------
+# ============================================================
+# PROVIDER REGISTRY - UPDATED 24 FEB 2026
+# ============================================================
 
 PROVIDERS: Dict[str, Provider] = {
     
@@ -119,7 +119,7 @@ PROVIDERS: Dict[str, Provider] = {
     "openrouter": Provider(
         name="OpenRouter",
         endpoint="https://openrouter.ai/api/v1/chat/completions",
-        rate_limit="20 RPM, 50 RPD (free), 1000 RPD ($10+ credits)",
+        rate_limit="20 RPM, 200 RPD (free)",
         models=[
             # Auto Router (MOST RELIABLE)
             Model("openrouter/free", "Auto (Free Router)", ["normal", "reasoning"], 200000, vision=True, tools=True),
@@ -137,9 +137,10 @@ PROVIDERS: Dict[str, Provider] = {
             
             # Verified Feb 2026 — Reasoning
             Model("deepseek/deepseek-r1-zero:free", "DeepSeek R1 Zero", ["reasoning"]),
+            Model("deepseek/deepseek-r1:free", "DeepSeek R1", ["reasoning"]),
             Model("qwen/qwen3-coder:free", "Qwen3 Coder 480B", ["reasoning", "normal"], 262144, tools=True),
             Model("stepfun/step-3.5-flash:free", "Step 3.5 Flash", ["reasoning"], 256000, tools=True),
-            Model("google/gemini-2.5-pro-exp-03-25:free", "Gemini 2.5 Pro Exp", ["reasoning"]),
+            Model("qwen/qwen3-235b-a22b-thinking-2507:free", "Qwen3 235B Thinking", ["reasoning"], 128000),
             Model("moonshotai/kimi-vl-a3b-thinking:free", "Kimi VL Thinking", ["reasoning"], vision=True),
             
             # New Feb 2026
@@ -148,10 +149,62 @@ PROVIDERS: Dict[str, Provider] = {
             Model("arcee-ai/trinity-large-preview:free", "Trinity Large Preview", ["normal"], 524288),
             Model("arcee-ai/trinity-mini:free", "Trinity Mini", ["normal"]),
             Model("zhipuai/glm-4.5-air:free", "GLM 4.5 Air", ["normal", "reasoning"]),
-            
-            # Cloaked / Community
-            Model("openrouter/optimus-alpha", "Optimus Alpha", ["normal", "reasoning"]),
-            Model("openrouter/quasar-alpha", "Quasar Alpha", ["normal", "reasoning"]),
+            Model("allenai/olmo-3.1-32b-think:free", "OLMo 3.1 32B Think", ["reasoning"]),
+        ]
+    ),
+    
+    # ==================== GEMINI ====================
+    "gemini": Provider(
+        name="Google Gemini",
+        endpoint="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        auth_header="x-goog-api-key",
+        auth_prefix="",
+        rate_limit="5-15 RPM, 100-1000 RPD (free tier)",
+        models=[
+            # Gemini 3 Series (Latest)
+            Model("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", ["normal", "reasoning"], 1048576),
+            Model("gemini-3-flash-preview", "Gemini 3 Flash Preview", ["normal", "reasoning"], 1048576),
+            # Gemini 2.5 Series (Stable)
+            Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
+            Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
+            Model("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
+            # Gemma
+            Model("gemma-3-27b-it", "Gemma 3 27B", ["normal"]),
+            Model("gemma-2-9b-it", "Gemma 2 9B", ["normal"]),
+        ]
+    ),
+    
+    # ==================== CEREBRAS ====================
+    "cerebras": Provider(
+        name="Cerebras",
+        endpoint="https://api.cerebras.ai/v1/chat/completions",
+        rate_limit="30 RPM, 1M tokens/day (free tier)",
+        models=[
+            # Currently Available (Feb 2026)
+            Model("zai-glm-4.7", "Z.ai GLM 4.7", ["normal", "reasoning"], 128000, tools=True),
+            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
+            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 128000),
+            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 262144),
+            # Note: llama-3.3-70b and qwen-3-32b DEPRECATED since Feb 16, 2026 - REMOVED
+        ]
+    ),
+    
+    # ==================== SAMBANOVA ====================
+    "sambanova": Provider(
+        name="SambaNova",
+        endpoint="https://api.sambanova.ai/v1/chat/completions",
+        rate_limit="Free tier available",
+        models=[
+            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
+            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
+            Model("Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout", ["normal"], 131072, vision=True),
+            Model("Llama-4-Maverick-17B-128E-Instruct", "Llama 4 Maverick", ["normal"], 131072, vision=True),
+            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 16384),
+            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
+            Model("DeepSeek-V3-0324", "DeepSeek V3 0324", ["normal"], 8192),
+            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            Model("QwQ-32B", "QwQ 32B", ["reasoning"], 32768),
+            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072),
         ]
     ),
     
@@ -185,58 +238,6 @@ PROVIDERS: Dict[str, Provider] = {
         ]
     ),
     
-    # ==================== GEMINI ====================
-    "gemini": Provider(
-        name="Google Gemini",
-        endpoint="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        auth_header="x-goog-api-key",
-        auth_prefix="",
-        rate_limit="5-15 RPM, 100-1000 RPD (free tier)",
-        models=[
-            Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
-            Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
-            # Di PROVIDERS["gemini"].models:
-            Model("gemini-2.5-flash-lite-preview-09-2025", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
-            Model("gemma-3-27b-it", "Gemma 3 27B", ["normal"]),
-            Model("gemma-2-9b-it", "Gemma 2 9B", ["normal"]),
-        ]
-    ),
-    
-    # ==================== CEREBRAS ====================
-    "cerebras": Provider(
-        name="Cerebras",
-        endpoint="https://api.cerebras.ai/v1/chat/completions",
-        rate_limit="30 RPM, 1M tokens/day (free tier)",
-        models=[
-            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 128000),
-            Model("llama-3.3-70b", "Llama 3.3 70B", ["normal"], 128000),
-            Model("qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
-            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 262144),
-            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
-            Model("zai-glm-4.6", "Z.ai GLM 4.6", ["normal", "reasoning"], 128000, tools=True),
-            Model("zai-glm-4.7", "Z.ai GLM 4.7", ["normal", "reasoning"], 128000, tools=True),
-        ]
-    ),
-    
-    # ==================== SAMBANOVA ====================
-    "sambanova": Provider(
-        name="SambaNova",
-        endpoint="https://api.sambanova.ai/v1/chat/completions",
-        rate_limit="Free tier available",
-        models=[
-            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
-            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
-            Model("Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout", ["normal"], 131072, vision=True),
-            Model("Llama-4-Maverick-17B-128E-Instruct", "Llama 4 Maverick", ["normal"], 131072, vision=True),
-            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 16384),
-            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 128000),
-            Model("DeepSeek-V3-0324", "DeepSeek V3 0324", ["normal"], 131072),
-            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
-            Model("QwQ-32B", "QwQ 32B", ["reasoning"], 32768),
-            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072),
-        ]
-    ),
-    
     # ==================== CLOUDFLARE ====================
     "cloudflare": Provider(
         name="Cloudflare",
@@ -248,8 +249,6 @@ PROVIDERS: Dict[str, Provider] = {
             Model("@cf/meta/llama-3.1-8b-instruct", "Llama 3.1 8B", ["normal"]),
             Model("@cf/mistralai/mistral-small-3.1-24b-instruct", "Mistral Small 3.1", ["normal"]),
             Model("@cf/google/gemma-3-12b-it", "Gemma 3 12B", ["normal"]),
-            Model("@cf/openai/gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"]),
-            Model("@cf/openai/gpt-oss-20b", "GPT-OSS 20B", ["normal"]),
         ]
     ),
     
@@ -275,7 +274,7 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cohere.ai/v2/chat",
         rate_limit="1000 calls/month (trial)",
         models=[
-            Model("command-a-03-2025", "Command A", ["normal"]),
+            Model("command-a-03-2025", "Command A", ["normal"]),  # FIXED: was command-a-08-2025
             Model("command-r-plus-08-2024", "Command R+", ["normal", "search"]),
             Model("command-r-08-2024", "Command R", ["normal"]),
             Model("command-r7b-12-2024", "Command R 7B", ["normal"]),
@@ -283,7 +282,7 @@ PROVIDERS: Dict[str, Provider] = {
     ),
     
     # ==================== SILICONFLOW ====================
-        "siliconflow": Provider(
+    "siliconflow": Provider(
         name="SiliconFlow",
         endpoint="https://api.siliconflow.com/v1/chat/completions",
         rate_limit="100 RPD (free models), varies (paid)",
