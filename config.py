@@ -275,7 +275,7 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cohere.ai/v2/chat",
         rate_limit="1000 calls/month (trial)",
         models=[
-            Model("command-a-08-2025", "Command A", ["normal"]),
+            Model("command-a-03-2025", "Command A", ["normal"]),
             Model("command-r-plus-08-2024", "Command R+", ["normal", "search"]),
             Model("command-r-08-2024", "Command R", ["normal"]),
             Model("command-r7b-12-2024", "Command R 7B", ["normal"]),
