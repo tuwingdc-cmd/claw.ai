@@ -208,7 +208,7 @@ PROVIDERS: Dict[str, Provider] = {
         ]
     ),
     
-    # ==================== POLLINATIONS ====================
+        # ==================== POLLINATIONS ====================
     "pollinations": Provider(
         name="Pollinations",
         endpoint="https://gen.pollinations.ai/v1/chat/completions",
@@ -216,25 +216,40 @@ PROVIDERS: Dict[str, Provider] = {
         auth_prefix="Bearer",
         rate_limit="1/15s (anon), unlimited (sk_)",
         models=[
-            Model("openai", "OpenAI (GPT-5)", ["normal"]),
-            Model("openai-fast", "OpenAI Fast", ["normal"]),
-            Model("openai-large", "OpenAI Large", ["normal"]),
-            Model("gemini", "Gemini", ["normal"]),
-            Model("gemini-fast", "Gemini Fast", ["normal"]),
-            Model("gemini-large", "Gemini Large", ["normal"]),
-            Model("gemini-search", "Gemini Search", ["search"], tools=True),
+            # Fast / Cheap
+            Model("qwen-safety", "Qwen3Guard 8B", ["normal"]),
+            Model("nova-fast", "Amazon Nova Micro", ["normal"]),
+            Model("openai-fast", "OpenAI GPT-5 Nano", ["normal"], vision=True),
+            Model("gemini-fast", "Gemini 2.5 Flash Lite", ["normal"], vision=True),
+            Model("qwen-coder", "Qwen3 Coder 30B", ["normal"]),
+            Model("mistral", "Mistral Small 3.2 24B", ["normal"]),
+            # Mid Tier
+            Model("openai", "OpenAI GPT-5 Mini", ["normal"], vision=True),
             Model("deepseek", "DeepSeek V3.2", ["normal"]),
-            Model("claude", "Claude", ["normal"]),
-            Model("claude-fast", "Claude Fast", ["normal"]),
-            Model("claude-large", "Claude Large", ["normal"]),
-            Model("mistral", "Mistral", ["normal"]),
-            Model("grok", "Grok", ["normal"]),
-            Model("qwen-coder", "Qwen3 Coder", ["normal"]),
-            Model("kimi", "Kimi K2.5", ["normal"]),
-            Model("glm", "GLM", ["normal"]),
-            Model("minimax", "MiniMax", ["normal"]),
-            Model("perplexity-fast", "Perplexity Fast", ["search"]),
+            Model("minimax", "MiniMax M2.1", ["normal"]),
+            Model("kimi", "Kimi K2.5", ["normal"], vision=True),
+            Model("glm", "Z.ai GLM-5", ["normal"]),
+            Model("perplexity-fast", "Perplexity Sonar", ["search"]),
+            # Premium (Free tanpa sk_ key)
+            Model("openai-large", "OpenAI GPT-5.2", ["normal"], vision=True),
             Model("perplexity-reasoning", "Perplexity Reasoning", ["reasoning", "search"]),
+            Model("openai-audio", "GPT-4o Mini Audio", ["normal"], vision=True),
+            Model("chickytutor", "ChickyTutor AI", ["normal"]),
+            Model("midijourney", "MIDIjourney", ["normal"]),
+            # Search
+            Model("gemini-search", "Gemini 2.5 Flash Lite Search", ["search"], vision=True, tools=True),
+            # PAID ONLY (💎) - butuh sk_ key berbayar
+            Model("grok", "xAI Grok 4 Fast", ["normal"]),
+            Model("gemini", "Google Gemini 3 Flash", ["normal"], vision=True),
+            Model("claude-fast", "Claude Haiku 4.5", ["normal"], vision=True),
+            Model("gemini-legacy", "Gemini 2.5 Pro", ["normal", "reasoning"], vision=True),
+            Model("claude", "Claude Sonnet 4.6", ["normal"], vision=True),
+            Model("gemini-large", "Gemini 3 Pro", ["normal", "reasoning"], vision=True),
+            Model("claude-large", "Claude Opus 4.6", ["normal"], vision=True),
+            Model("claude-legacy", "Claude Opus 4.5", ["normal"], vision=True),
+            # Alpha / Community
+            Model("nomnom", "NomNom", ["reasoning", "search"]),
+            Model("polly", "Polly", ["normal", "reasoning", "search"], vision=True),
         ]
     ),
     
