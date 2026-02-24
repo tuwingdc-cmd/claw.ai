@@ -646,118 +646,20 @@ class MLVOCAProvider(BaseProvider):
 # PUTER PROVIDER
 # ============================================================
 
-class PuterProvider(BaseProvider):
-    """Puter.com API - Free 200+ AI models"""
+class PuterProvider(OpenAICompatibleProvider):
+    """Puter.com API - Free 200+ AI models via OpenAI-compatible endpoint"""
     
     def __init__(self, api_token: str = None):
         super().__init__(api_token)
         self.name = "puter"
-        self.api_token = api_token
-        self.base_url = "https://api.puter.com"
+        self.api_key = api_token
+        self.endpoint = "https://api.puter.com/puterai/openai/v1/chat/completions"
     
-    async def chat(
-        self,
-        messages: List[Dict[str, str]],
-        model: str,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-        **kwargs
-    ) -> AIResponse:
-        import time
-        start = time.time()
-        
-        if not self.api_token:
-            return AIResponse(
-                success=False, content="", provider=self.name,
-                model=model, error="Puter API token not provided"
-            )
-        
-        # Determine driver
-        if model.startswith("claude"):
-            driver = "anthropic"
-        elif model.startswith("google/") or model.startswith("gemini"):
-            driver = "google-vertex"
-        elif model.startswith("x-ai/") or model.startswith("grok"):
-            driver = "xai"
-        elif model.startswith("deepseek"):
-            driver = "deepseek"
-        elif model.startswith("meta-llama") or model.startswith("llama"):
-            driver = "together"
-        elif model.startswith("mistral"):
-            driver = "mistral"
-        elif model.startswith("perplexity"):
-            driver = "perplexity"
-        else:
-            driver = "openai-completion"
-        
-        payload = {
-            "interface": "puter-chat-completion",
-            "driver": driver,
-            "test_mode": False,
-            "method": "complete",
-            "args": {"messages": messages, "model": model, "stream": False}
-        }
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_token}",
-            "Origin": "https://puter.com"
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/drivers/call",
-                    headers=headers, json=payload,
-                    timeout=aiohttp.ClientTimeout(total=90)
-                ) as resp:
-                    latency = time.time() - start
-                    
-                    if resp.status == 200:
-                        data = await resp.json()
-                        try:
-                            if "result" in data:
-                                result = data["result"]
-                                if "message" in result:
-                                    content = result["message"].get("content", "")
-                                elif "choices" in result:
-                                    content = result["choices"][0]["message"]["content"]
-                                else:
-                                    content = str(result)
-                            elif "message" in data:
-                                content = data["message"].get("content", str(data))
-                            else:
-                                content = str(data)
-                        except:
-                            content = str(data)
-                        
-                        return AIResponse(
-                            success=True, content=content,
-                            provider=self.name, model=model, latency=latency
-                        )
-                    else:
-                        error_text = await resp.text()
-                        return AIResponse(
-                            success=False, content="",
-                            provider=self.name, model=model,
-                            error=f"HTTP {resp.status}: {error_text[:100]}",
-                            latency=latency
-                        )
-                        
-        except asyncio.TimeoutError:
-            return AIResponse(
-                success=False, content="", provider=self.name,
-                model=model, error="Request timeout"
-            )
-        except Exception as e:
-            log.error(f"Puter exception: {e}")
-            return AIResponse(
-                success=False, content="", provider=self.name,
-                model=model, error=str(e)
-            )
+    def _build_headers(self) -> Dict[str, str]:
+        return {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
     
     async def health_check(self) -> bool:
-        return self.api_token is not None
+        return self.api_key is not None
 
 
 # ============================================================
