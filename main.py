@@ -250,6 +250,144 @@ async def execute_music_action(message: discord.Message, action: dict):
             await player.pause(False)
             log.info("🎵 Resumed")
 
+
+# ============================================================
+# DOWNLOAD ACTION HANDLER — Download video & upload to Discord
+# ============================================================
+
+async def execute_download_action(message: discord.Message, action: dict):
+    """Download video and upload to Discord"""
+    video_url = action.get("video_url", "")
+    filename = action.get("filename", "video.mp4")
+    platform = action.get("platform", "unknown")
+    
+    if not video_url:
+        return
+    
+    log.info(f"📥 Downloading: {video_url[:80]}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            # First, check file size with HEAD request
+            try:
+                async with session.head(video_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as head_resp:
+                    content_length = int(head_resp.headers.get("Content-Length", 0))
+            except:
+                content_length = 0
+            
+            # If too large (>25MB), send link instead
+            if content_length > 25_000_000:
+                embed = discord.Embed(
+                    title=f"📥 Video dari {platform.title()}",
+                    description=f"Video terlalu besar ({content_length / 1_000_000:.1f} MB) untuk upload ke Discord.\n\n**[Download di sini]({video_url})**",
+                    color=0x1DB954
+                )
+                embed.set_footer(text="⏰ Link mungkin expire dalam beberapa jam")
+                await message.channel.send(embed=embed)
+                return
+            
+            # Download video
+            async with session.get(video_url, timeout=aiohttp.ClientTimeout(total=120), allow_redirects=True) as resp:
+                if resp.status != 200:
+                    await message.channel.send(f"❌ Gagal download video (HTTP {resp.status})")
+                    return
+                
+                # Stream to temp file
+                temp_dir = tempfile.mkdtemp()
+                temp_path = os.path.join(temp_dir, filename)
+                
+                total_size = 0
+                with open(temp_path, "wb") as f:
+                    async for chunk in resp.content.iter_chunked(8192):
+                        total_size += len(chunk)
+                        if total_size > 25_000_000:
+                            # Too large during download
+                            f.close()
+                            os.unlink(temp_path)
+                            os.rmdir(temp_dir)
+                            
+                            embed = discord.Embed(
+                                title=f"📥 Video dari {platform.title()}",
+                                description=f"Video terlalu besar untuk Discord.\n\n**[Download di sini]({video_url})**",
+                                color=0x1DB954
+                            )
+                            await message.channel.send(embed=embed)
+                            return
+                        f.write(chunk)
+                
+                # Upload to Discord
+                file_size_mb = total_size / 1_000_000
+                log.info(f"📥 Downloaded {file_size_mb:.1f}MB, uploading to Discord...")
+                
+                discord_file = discord.File(temp_path, filename=filename)
+                await message.channel.send(
+                    content=f"📥 Video dari **{platform.title()}** ({file_size_mb:.1f} MB)",
+                    file=discord_file
+                )
+                
+                # Cleanup
+                os.unlink(temp_path)
+                os.rmdir(temp_dir)
+                log.info(f"✅ Video uploaded: {filename}")
+    
+    except asyncio.TimeoutError:
+        await message.channel.send("❌ Download timeout — video terlalu besar atau server lambat.")
+    except Exception as e:
+        log.error(f"📥 Download error: {e}")
+        # Send link as fallback
+        embed = discord.Embed(
+            title=f"📥 Video dari {platform.title()}",
+            description=f"Gagal upload otomatis.\n\n**[Download manual di sini]({video_url})**",
+            color=0xFF5555
+        )
+        await message.channel.send(embed=embed)
+
+# ============================================================
+# IMAGE ACTION HANDLER — Send generated image
+# ============================================================
+
+async def execute_image_action(message: discord.Message, action: dict):
+    """Send AI-generated image"""
+    image_url = action.get("image_url", "")
+    prompt = action.get("prompt", "AI Generated Image")
+    
+    if not image_url:
+        return
+    
+    log.info(f"🖼️ Generating image: {prompt[:50]}")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                if resp.status == 200:
+                    image_data = await resp.read()
+                    
+                    temp_dir = tempfile.mkdtemp()
+                    temp_path = os.path.join(temp_dir, "generated.png")
+                    
+                    with open(temp_path, "wb") as f:
+                        f.write(image_data)
+                    
+                    discord_file = discord.File(temp_path, filename="generated.png")
+                    await message.channel.send(file=discord_file)
+                    
+                    os.unlink(temp_path)
+                    os.rmdir(temp_dir)
+                    log.info("✅ Image sent")
+                else:
+                    # Fallback: send URL as embed
+                    embed = discord.Embed(color=0x1DB954)
+                    embed.set_image(url=image_url)
+                    await message.channel.send(embed=embed)
+    
+    except Exception as e:
+        log.error(f"🖼️ Image error: {e}")
+        # Fallback: embed URL
+        embed = discord.Embed(color=0x1DB954)
+        embed.set_image(url=image_url)
+        await message.channel.send(embed=embed)
+
+
 # ============================================================
 # EVENTS
 # ============================================================
