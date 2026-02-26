@@ -405,7 +405,40 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
     return "\n".join(parts) if parts else None
 
 async def _get_video_download_url(url: str) -> Optional[dict]:
-    """Download video langsung pakai yt-dlp — no third-party API needed"""
+    """Download video langsung pakai yt-dlp dengan Instagram proxy fallback"""
+    
+    original_url = url
+    platform = _detect_platform(url)
+    
+    # ── INSTAGRAM: Coba proxy dulu karena sering butuh login ──
+    if platform == "instagram":
+        proxy_services = [
+            ("ddinstagram.com", url.replace("instagram.com", "ddinstagram.com")),
+            ("imginn.com", None),  # Butuh parsing khusus, skip dulu
+        ]
+        
+        for service_name, proxy_url in proxy_services:
+            if not proxy_url:
+                continue
+            log.info(f"📱 Trying Instagram proxy: {service_name}")
+            result = await _try_ytdlp_download(proxy_url, original_url)
+            if result:
+                return result
+        
+        # Fallback ke direct (mungkin gagal tanpa cookies)
+        log.info("📱 Trying direct Instagram (may need cookies)")
+        result = await _try_ytdlp_download(url, original_url)
+        if result:
+            return result
+        
+        return None
+    
+    # ── Platform lain: langsung yt-dlp ──
+    return await _try_ytdlp_download(url, original_url)
+
+
+async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[dict]:
+    """Actual yt-dlp download attempt"""
     try:
         import yt_dlp
         
@@ -422,8 +455,12 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
                 "socket_timeout": 30,
                 "retries": 3,
                 "http_headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
                 },
+                # Uncomment jika punya cookies.txt:
+                # "cookiefile": "/root/claw.ai/cookies.txt",
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -436,6 +473,9 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
                         actual_path = os.path.join(temp_dir, f)
                         break
                 
+                if not os.path.exists(actual_path):
+                    return None
+                
                 title = info.get("title", "video")[:50]
                 clean_title = re.sub(r'[^\w\s-]', '', title).strip()
                 clean_title = re.sub(r'\s+', '_', clean_title) or "video"
@@ -445,10 +485,11 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
                     "temp_dir": temp_dir,
                     "filename": f"{clean_title}.mp4",
                     "status": "local",
-                    "filesize": os.path.getsize(actual_path) if os.path.exists(actual_path) else 0,
+                    "filesize": os.path.getsize(actual_path),
                     "title": info.get("title", ""),
                     "uploader": info.get("uploader", info.get("channel", "")),
                     "duration": info.get("duration", 0),
+                    "original_url": original_url or url,
                 }
         
         result = await asyncio.get_event_loop().run_in_executor(None, _download_direct)
@@ -456,8 +497,6 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
             log.info(f"🎬 yt-dlp OK: {result['filename']} ({result.get('filesize', 0) / 1_000_000:.1f}MB)")
             return result
     
-    except ImportError:
-        log.error("yt-dlp not installed! pip install yt-dlp")
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
     
@@ -668,45 +707,36 @@ FETCH_URL_TOOL = {
         "description": (
             "Read, summarize, or download content from ANY URL. "
             "\n\n"
-            "SUPPORTED PLATFORMS FOR DOWNLOAD (video/audio):\n"
-            "• TikTok (no watermark)\n"
-            "• Instagram (reels, posts, stories, IGTV)\n"
-            "• YouTube (videos, shorts, music)\n"
-            "• Twitter/X (videos, GIFs)\n"
-            "• Facebook (videos, reels)\n"
-            "• Reddit (videos)\n"
-            "• Pinterest\n"
-            "• Twitch (clips)\n"
-            "• SoundCloud\n"
-            "• Spotify (preview only)\n"
+            "SUPPORTED PLATFORMS FOR DOWNLOAD:\n"
+            "• TikTok (no watermark) ✅\n"
+            "• YouTube (videos, shorts, music) ✅\n"
+            "• Twitter/X (videos, GIFs) ✅\n"
+            "• Reddit (videos) ✅\n"
+            "• Facebook (videos, reels) ✅\n"
+            "• Instagram (reels, posts) ⚠️ May require fallback\n"
             "• And 1000+ other sites\n"
             "\n"
             "SUPPORTED FOR READING/SUMMARIZING:\n"
             "• News articles, blogs, Medium\n"
-            "• Twitter/X tweets\n"
-            "• YouTube (title, description, transcript)\n"
-            "• GitHub (README, code)\n"
-            "• Any website\n"
+            "• Twitter/X tweets, YouTube info\n"
+            "• GitHub README, any website\n"
             "\n"
             "ACTIONS:\n"
-            "• action='download' → Download video/audio file\n"
+            "• action='download' → Download video/audio\n"
             "• action='read' → Read content\n"
-            "• action='summarize' → Read for summarization\n"
+            "• action='summarize' → Read for summary\n"
             "\n"
-            "IMPORTANT: You CAN download from Instagram, TikTok, YouTube, Twitter, etc. "
-            "Do NOT say any platform is unsupported — try it first!"
+            "NOTE: Instagram sometimes requires login. If download fails, "
+            "inform the user and suggest they try a different link or use a web-based downloader."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The full URL to fetch"
-                },
+                "url": {"type": "string", "description": "The full URL"},
                 "action": {
                     "type": "string",
                     "enum": ["read", "summarize", "download"],
-                    "description": "read=get content, summarize=for AI summary, download=get video/audio file"
+                    "description": "Action to perform"
                 }
             },
             "required": ["url"]
@@ -917,7 +947,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     tools_used = []
     pending_actions = []  # music, download, image
 
-    for round_num in range(max_rounds):
+        for round_num in range(max_rounds):
         current_messages.append({
             "role": "assistant",
             "content": resp.content or "",
@@ -934,7 +964,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
-            # Capture actions BEFORE executing
+            # Capture actions
             if fn_name == "play_music":
                 pending_actions.append({
                     "type": "music",
@@ -944,7 +974,6 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
 
             tool_result = await execute_tool_call(fn_name, fn_args)
             
-            # Check if tool returned a structured action (download, image)
             try:
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict) and result_data.get("type") == "download":
@@ -960,13 +989,23 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             current_messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
-                "content": tool_result if not tool_result.startswith("{") else f"Result: {tool_result}"
+                "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
             })
 
-        resp = await prov.chat(current_messages, model)
+        # ── FIX: Round 2+ tanpa tools agar model jawab langsung ──
+        resp = await prov.chat(current_messages, model)  # Tanpa tools
 
         if not resp.success:
-            return None, None, pending_actions
+            # Coba tanpa tool_calls di message terakhir kalau error
+            if "tool" in str(resp.error).lower():
+                log.warning("Tool error, retrying without tool context...")
+                # Remove tool-related messages and retry
+                clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
+                clean_messages.append({"role": "user", "content": f"Based on the information gathered, please provide your response."})
+                resp = await prov.chat(clean_messages, model)
+            
+            if not resp.success:
+                return None, None, pending_actions
 
         tool_calls = getattr(resp, "tool_calls", None)
         if not tool_calls:
