@@ -405,83 +405,59 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
     return "\n".join(parts) if parts else None
 
 async def _get_video_download_url(url: str) -> Optional[dict]:
-    """Get direct video download URL via Cobalt API"""
-    cobalt_instances = [
-        "https://api.cobalt.tools",
-    ]
-    
-    for instance in cobalt_instances:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{instance}/api/json",
-                    json={
-                        "url": url,
-                        "vCodec": "h264",
-                        "vQuality": "720",
-                        "isAudioOnly": False,
-                        "filenamePattern": "basic",
-                    },
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        status = data.get("status")
-                        
-                        if status in ["stream", "redirect"]:
-                            log.info(f"🎬 Cobalt OK: {url[:60]}")
-                            return {
-                                "url": data.get("url"),
-                                "filename": data.get("filename", "video.mp4"),
-                                "status": status,
-                            }
-                        elif status == "picker":
-                            # Multiple options (e.g., IG carousel)
-                            picker = data.get("picker", [])
-                            if picker:
-                                return {
-                                    "url": picker[0].get("url"),
-                                    "filename": "video.mp4",
-                                    "status": "stream",
-                                }
-                        elif status == "error":
-                            log.warning(f"Cobalt error: {data.get('text', 'unknown')}")
-                    else:
-                        log.warning(f"Cobalt HTTP {resp.status}")
-        except Exception as e:
-            log.warning(f"Cobalt instance {instance} error: {e}")
-            continue
-    
-    # Fallback to yt-dlp for direct URL
+    """Download video langsung pakai yt-dlp — no third-party API needed"""
     try:
         import yt_dlp
         
-        def _get_url():
+        def _download_direct():
+            temp_dir = tempfile.mkdtemp()
+            output_path = os.path.join(temp_dir, "video.mp4")
+            
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
-                "format": "best[height<=720][ext=mp4]/best[height<=720]/best",
-                "skip_download": True,
+                "format": "best[height<=720][ext=mp4]/best[height<=720]/best[ext=mp4]/best",
+                "outtmpl": output_path,
+                "merge_output_format": "mp4",
+                "socket_timeout": 30,
+                "retries": 3,
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                },
             }
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                info = ydl.extract_info(url, download=True)
+                
+                # Find actual downloaded file
+                actual_path = output_path
+                if not os.path.exists(actual_path):
+                    for f in os.listdir(temp_dir):
+                        actual_path = os.path.join(temp_dir, f)
+                        break
+                
+                title = info.get("title", "video")[:50]
+                clean_title = re.sub(r'[^\w\s-]', '', title).strip()
+                clean_title = re.sub(r'\s+', '_', clean_title) or "video"
+                
                 return {
-                    "url": info.get("url"),
-                    "filename": f"{info.get('title', 'video')[:50]}.mp4",
-                    "status": "stream",
-                    "filesize": info.get("filesize") or info.get("filesize_approx"),
+                    "local_path": actual_path,
+                    "temp_dir": temp_dir,
+                    "filename": f"{clean_title}.mp4",
+                    "status": "local",
+                    "filesize": os.path.getsize(actual_path) if os.path.exists(actual_path) else 0,
+                    "title": info.get("title", ""),
+                    "uploader": info.get("uploader", info.get("channel", "")),
+                    "duration": info.get("duration", 0),
                 }
         
-        result = await asyncio.get_event_loop().run_in_executor(None, _get_url)
-        if result and result.get("url"):
-            log.info(f"🎬 yt-dlp URL OK: {url[:60]}")
+        result = await asyncio.get_event_loop().run_in_executor(None, _download_direct)
+        if result and result.get("local_path") and os.path.exists(result["local_path"]):
+            log.info(f"🎬 yt-dlp OK: {result['filename']} ({result.get('filesize', 0) / 1_000_000:.1f}MB)")
             return result
+    
     except ImportError:
-        log.warning("yt-dlp not installed")
+        log.error("yt-dlp not installed! pip install yt-dlp")
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
     
@@ -493,18 +469,22 @@ async def do_fetch_url(url: str, action: str = "read") -> str:
     
     log.info(f"📄 Fetching URL: {url[:80]} | platform={platform} | action={action}")
     
-    # ── DOWNLOAD ACTION ──
+        # ── DOWNLOAD ACTION ──
     if action == "download":
         download_info = await _get_video_download_url(url)
-        if download_info and download_info.get("url"):
+        if download_info and download_info.get("status") == "local":
             return json.dumps({
                 "type": "download",
-                "video_url": download_info["url"],
+                "local_path": download_info["local_path"],
+                "temp_dir": download_info["temp_dir"],
                 "filename": download_info.get("filename", "video.mp4"),
                 "platform": platform,
                 "original_url": url,
+                "method": "local",
+                "title": download_info.get("title", ""),
+                "uploader": download_info.get("uploader", ""),
             })
-        return "Cannot download video from this URL. The content might be protected or not a video."
+        return "Cannot download video from this URL. The content might be protected, require login, or not a video."
     
     # ── READ/SUMMARIZE ACTION ──
     content = None
