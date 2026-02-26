@@ -1,6 +1,7 @@
 """
 Message Handler + DB-backed Conversation Memory + Smart Skills
 """
+import json
 import logging
 import re
 import asyncio
@@ -86,7 +87,6 @@ WEB_SEARCH_TOOL = {
 TOOLS_LIST = [WEB_SEARCH_TOOL]
 
 
-
 # ============================================================
 # MODE DETECTOR
 # ============================================================
@@ -104,14 +104,11 @@ class ModeDetector:
             if kw in lower: return "reasoning"
         return "normal"
 
-# ============================================================
-# FALLBACK
-# ============================================================
-
 
 # ============================================================
 # TOOL CALL EXECUTOR
 # ============================================================
+
 async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
     """Eksekusi tool yang diminta AI"""
     if tool_name == "web_search":
@@ -120,76 +117,101 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         return await do_search(query)
     return f"Unknown tool: {tool_name}"
 
-async def handle_with_tools(messages: list, prov_name: str, model: str, 
+
+# ============================================================
+# TOOL CALLING HANDLER — FIXED
+# ============================================================
+# FIX #1: Multi-tool + multi-round loop
+# FIX #2: content "" bukan None
+# FIX #5: Round 2+ tetap kirim tools parameter
+
+async def handle_with_tools(messages: list, prov_name: str, model: str,
                              guild_id: int = 0) -> tuple:
     """
     Kirim ke AI dengan tools, handle tool_calls response,
-    jalankan tool, kirim balik ke AI, dapat jawaban final.
+    jalankan SEMUA tools, kirim balik ke AI.
+    Support multi-round (AI bisa panggil tool berkali-kali).
     """
     from core.providers import supports_tool_calling
-    
+
     # Cek apakah provider support tools
     if not supports_tool_calling(prov_name):
-        return None, None  # Signal: pakai fallback biasa
-    
+        return None, None
+
     prov = ProviderFactory.get(prov_name, API_KEYS)
     if not prov or not await prov.health_check():
         return None, None
-    
-    # Round 1: Kirim ke AI dengan tools
+
+    # ── Round 1: Kirim ke AI dengan tools ──
     log.info(f"🤖 Tool calling: {prov_name}/{model}")
     resp = await prov.chat(messages, model, tools=TOOLS_LIST, tool_choice="auto")
-    
+
     if not resp.success:
         return None, None
-    
-    import json
-    content_raw = resp.content
-    
+
     # Cek apakah AI minta tool call
-    # Tool calls biasanya ada di response sebagai JSON khusus
-    # Groq/OpenRouter return tool_calls dalam content atau structured
-    tool_call_data = None
     tool_calls = getattr(resp, "tool_calls", None)
     if not tool_calls:
         # AI tidak perlu tool → langsung return jawaban
         return resp, None
 
-    tool_call_data = tool_calls[0]
-    
-    # AI minta search! Eksekusi tool
-    fn_name = tool_call_data.get("function", {}).get("name", "")
-    fn_args_str = tool_call_data.get("function", {}).get("arguments", "{}")
-    tool_call_id = tool_call_data.get("id", "call_0")
-    
-    try:
-        fn_args = json.loads(fn_args_str)
-    except:
-        fn_args = {"query": content_raw}
-    
-    tool_result = await execute_tool_call(fn_name, fn_args)
-    log.info(f"✅ Tool executed: {fn_name}")
-    
-    # Round 2: Kirim hasil tool ke AI, minta jawaban final
-    messages_with_tool = messages + [
-        {
+    # ── Multi-round tool calling loop ──
+    max_rounds = 5
+    current_messages = list(messages)  # copy agar tidak mutate original
+    search_performed = False
+
+    for round_num in range(max_rounds):
+        # Tambah assistant message dengan tool_calls
+        # FIX #2: content = "" bukan None (Groq/OpenRouter reject None)
+        current_messages.append({
             "role": "assistant",
-            "content": None,
-            "tool_calls": [tool_call_data]
-        },
-        {
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": tool_result
-        }
-    ]
-    
-    final_resp = await prov.chat(messages_with_tool, model)
-    if final_resp.success:
-        _log_request(guild_id, prov_name, model, True, final_resp.latency)
-        return final_resp, f"🔍 Auto-searched via {prov_name}/{model}"
-    
-    return None, None
+            "content": resp.content or "",
+            "tool_calls": tool_calls
+        })
+
+        # FIX #1: Eksekusi SEMUA tool calls, bukan cuma [0]
+        for tc in tool_calls:
+            fn_name = tc.get("function", {}).get("name", "")
+            fn_args_str = tc.get("function", {}).get("arguments", "{}")
+            tool_call_id = tc.get("id", f"call_{round_num}")
+
+            try:
+                fn_args = json.loads(fn_args_str)
+            except (json.JSONDecodeError, TypeError):
+                fn_args = {"query": fn_args_str}
+
+            tool_result = await execute_tool_call(fn_name, fn_args)
+            log.info(f"✅ Round {round_num + 1}: {fn_name}({fn_args})")
+            search_performed = True
+
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": tool_result
+            })
+
+        # FIX #5: Round 2+ tetap kirim tools agar provider tidak reject
+        resp = await prov.chat(current_messages, model, tools=TOOLS_LIST)
+
+        if not resp.success:
+            return None, None
+
+        # Cek apakah AI mau call tool LAGI
+        tool_calls = getattr(resp, "tool_calls", None)
+        if not tool_calls:
+            # Selesai — AI sudah puas, return jawaban final
+            _log_request(guild_id, prov_name, model, True, resp.latency)
+            note = f"🔍 Auto-searched via {prov_name}/{model}" if search_performed else None
+            return resp, note
+
+    # Max rounds reached — return apapun yang terakhir
+    _log_request(guild_id, prov_name, model, True, resp.latency)
+    return resp, f"🔍 Auto-searched ({max_rounds} rounds) via {prov_name}/{model}"
+
+
+# ============================================================
+# FALLBACK
+# ============================================================
 
 async def execute_with_fallback(messages, mode, preferred_provider, preferred_model, guild_id=0):
     chain = [(preferred_provider, preferred_model)]
