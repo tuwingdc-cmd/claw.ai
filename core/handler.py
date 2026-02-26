@@ -199,7 +199,6 @@ async def _fetch_via_jina(url: str) -> Optional[str]:
             ) as resp:
                 if resp.status == 200:
                     content = await resp.text()
-                    # Trim to reasonable size for AI
                     if len(content) > 8000:
                         content = content[:8000] + "\n\n[... content trimmed ...]"
                     log.info(f"📄 Jina Reader OK: {url[:60]}")
@@ -217,7 +216,7 @@ async def _fetch_via_bs4(url: str) -> Optional[str]:
     except ImportError:
         log.warning("beautifulsoup4 not installed")
         return None
-    
+
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -232,27 +231,23 @@ async def _fetch_via_bs4(url: str) -> Optional[str]:
                 if resp.status == 200:
                     html = await resp.text()
                     soup = BeautifulSoup(html, "html.parser")
-                    
-                    # Remove script, style, nav, footer
+
                     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
                         tag.decompose()
-                    
-                    # Try article content first
+
                     article = soup.find("article")
                     if article:
                         text = article.get_text(separator="\n", strip=True)
                     else:
-                        # Fallback to main or body
                         main = soup.find("main") or soup.find("body")
                         text = main.get_text(separator="\n", strip=True) if main else ""
-                    
-                    # Clean up
+
                     lines = [line.strip() for line in text.split("\n") if line.strip()]
                     text = "\n".join(lines)
-                    
+
                     if len(text) > 6000:
                         text = text[:6000] + "\n\n[... content trimmed ...]"
-                    
+
                     if len(text) > 100:
                         log.info(f"📄 BS4 fetch OK: {url[:60]}")
                         return text
@@ -267,15 +262,13 @@ async def _fetch_twitter(url: str) -> Optional[str]:
         "nitter.privacydev.net",
         "nitter.poast.org",
     ]
-    
-    # Extract tweet path
+
     match = re.search(r'(?:twitter\.com|x\.com)/(\w+)/status/(\d+)', url)
     if not match:
         return await _fetch_via_jina(url)
-    
+
     username, tweet_id = match.group(1), match.group(2)
-    
-    # Try Nitter instances
+
     for instance in nitter_instances:
         try:
             nitter_url = f"https://{instance}/{username}/status/{tweet_id}"
@@ -284,12 +277,11 @@ async def _fetch_twitter(url: str) -> Optional[str]:
                 return f"[Tweet from @{username}]\n\n{content}"
         except:
             continue
-    
-    # Fallback to direct Jina on original URL
+
     content = await _fetch_via_jina(url)
     if content:
         return f"[Tweet from @{username}]\n\n{content}"
-    
+
     return None
 
 async def _fetch_youtube_transcript(url: str) -> Optional[str]:
@@ -297,10 +289,9 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
     video_id = _extract_youtube_id(url)
     if not video_id:
         return None
-    
+
     parts = []
-    
-    # Step 1: Get video info via oembed (always works)
+
     try:
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
         async with aiohttp.ClientSession() as session:
@@ -311,11 +302,10 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
                     parts.append(f"Channel: {data.get('author_name', 'Unknown')}")
     except:
         pass
-    
-    # Step 2: Try to get transcript via yt-dlp
+
     try:
         import yt_dlp
-        
+
         def _get_info():
             ydl_opts = {
                 "quiet": True,
@@ -327,34 +317,32 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=False)
-        
+
         info = await asyncio.get_event_loop().run_in_executor(None, _get_info)
-        
+
         if info:
             if not parts:
                 parts.append(f"Title: {info.get('title', 'Unknown')}")
                 parts.append(f"Channel: {info.get('channel', info.get('uploader', 'Unknown'))}")
-            
+
             duration = info.get("duration", 0)
             if duration:
                 mins, secs = divmod(duration, 60)
                 parts.append(f"Duration: {int(mins)}:{int(secs):02d}")
-            
+
             view_count = info.get("view_count")
             if view_count:
                 parts.append(f"Views: {view_count:,}")
-            
+
             desc = info.get("description", "")
             if desc:
                 parts.append(f"Description: {desc[:500]}")
-            
-            # Get subtitles/transcript
+
             subtitles = info.get("subtitles", {})
             auto_subs = info.get("automatic_captions", {})
-            
+
             transcript_text = None
-            
-            # Try manual subs first, then auto
+
             for sub_source in [subtitles, auto_subs]:
                 for lang in ["id", "en"]:
                     if lang in sub_source:
@@ -381,42 +369,41 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
                             break
                 if transcript_text:
                     break
-            
+
             if transcript_text:
                 if len(transcript_text) > 5000:
                     transcript_text = transcript_text[:5000] + "... [trimmed]"
                 parts.append(f"\nTranscript:\n{transcript_text}")
-            
+
             log.info(f"🎬 YouTube info OK: {video_id}")
             return "\n".join(parts)
-    
+
     except ImportError:
         log.warning("yt-dlp not installed, falling back to Jina")
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
-    
-    # Fallback to Jina
+
     jina_content = await _fetch_via_jina(url)
     if jina_content:
         if parts:
             return "\n".join(parts) + "\n\n" + jina_content
         return jina_content
-    
+
     return "\n".join(parts) if parts else None
 
 async def _get_video_download_url(url: str) -> Optional[dict]:
     """Download video langsung pakai yt-dlp dengan Instagram proxy fallback"""
-    
+
     original_url = url
     platform = _detect_platform(url)
-    
+
     # ── INSTAGRAM: Coba proxy dulu karena sering butuh login ──
     if platform == "instagram":
         proxy_services = [
             ("ddinstagram.com", url.replace("instagram.com", "ddinstagram.com")),
-            ("imginn.com", None),  # Butuh parsing khusus, skip dulu
+            ("imginn.com", None),
         ]
-        
+
         for service_name, proxy_url in proxy_services:
             if not proxy_url:
                 continue
@@ -424,15 +411,14 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
             result = await _try_ytdlp_download(proxy_url, original_url)
             if result:
                 return result
-        
-        # Fallback ke direct (mungkin gagal tanpa cookies)
+
         log.info("📱 Trying direct Instagram (may need cookies)")
         result = await _try_ytdlp_download(url, original_url)
         if result:
             return result
-        
+
         return None
-    
+
     # ── Platform lain: langsung yt-dlp ──
     return await _try_ytdlp_download(url, original_url)
 
@@ -441,11 +427,11 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
     """Actual yt-dlp download attempt"""
     try:
         import yt_dlp
-        
+
         def _download_direct():
             temp_dir = tempfile.mkdtemp()
             output_path = os.path.join(temp_dir, "video.mp4")
-            
+
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -459,27 +445,24 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
                 },
-                # Uncomment jika punya cookies.txt:
-                # "cookiefile": "/root/claw.ai/cookies.txt",
             }
-            
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                
-                # Find actual downloaded file
+
                 actual_path = output_path
                 if not os.path.exists(actual_path):
                     for f in os.listdir(temp_dir):
                         actual_path = os.path.join(temp_dir, f)
                         break
-                
+
                 if not os.path.exists(actual_path):
                     return None
-                
+
                 title = info.get("title", "video")[:50]
                 clean_title = re.sub(r'[^\w\s-]', '', title).strip()
                 clean_title = re.sub(r'\s+', '_', clean_title) or "video"
-                
+
                 return {
                     "local_path": actual_path,
                     "temp_dir": temp_dir,
@@ -491,24 +474,24 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
                     "duration": info.get("duration", 0),
                     "original_url": original_url or url,
                 }
-        
+
         result = await asyncio.get_event_loop().run_in_executor(None, _download_direct)
         if result and result.get("local_path") and os.path.exists(result["local_path"]):
             log.info(f"🎬 yt-dlp OK: {result['filename']} ({result.get('filesize', 0) / 1_000_000:.1f}MB)")
             return result
-    
+
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
-    
+
     return None
 
 async def do_fetch_url(url: str, action: str = "read") -> str:
     """Universal URL fetcher — read content or get download URL"""
     platform = _detect_platform(url)
-    
+
     log.info(f"📄 Fetching URL: {url[:80]} | platform={platform} | action={action}")
-    
-        # ── DOWNLOAD ACTION ──
+
+    # ── DOWNLOAD ACTION ──
     if action == "download":
         download_info = await _get_video_download_url(url)
         if download_info and download_info.get("status") == "local":
@@ -524,37 +507,36 @@ async def do_fetch_url(url: str, action: str = "read") -> str:
                 "uploader": download_info.get("uploader", ""),
             })
         return "Cannot download video from this URL. The content might be protected, require login, or not a video."
-    
+
     # ── READ/SUMMARIZE ACTION ──
     content = None
-    
+
     if platform == "twitter":
         content = await _fetch_twitter(url)
-    
+
     elif platform == "youtube":
         content = await _fetch_youtube_transcript(url)
-    
+
     elif platform in ("tiktok", "instagram", "reddit"):
-        # Try Jina first for metadata
         content = await _fetch_via_jina(url)
-    
+
     elif platform == "github":
         content = await _fetch_via_jina(url)
-    
+
     # Generic / fallback
     if not content:
         content = await _fetch_via_jina(url)
-    
+
     if not content:
         content = await _fetch_via_bs4(url)
-    
+
     if not content:
         return (
             f"Cannot access content from {url}. "
             f"Possible reasons: website requires login, anti-bot protection, "
             f"or content is not publicly accessible."
         )
-    
+
     return f"[Content from {platform}: {url}]\n\n{content}"
 
 
@@ -784,7 +766,7 @@ TOOLS_LIST = [
 class ModeDetector:
     SEARCH_KW = ["berita terbaru", "harga sekarang", "news today", "current price", "latest news"]
     REASON_KW = ["jelaskan step by step", "hitung ", "analisis ", "solve ", "tulis kode", "write code"]
-    
+
     @classmethod
     def detect(cls, content):
         lower = content.lower()
@@ -893,17 +875,16 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         prompt = tool_args.get("prompt", "")
         size = tool_args.get("size", "square")
         log.info(f"🖼️ Tool: generate_image(prompt={prompt[:50]}, size={size})")
-        
+
         size_map = {
             "square": (1024, 1024),
             "wide": (1280, 720),
             "tall": (720, 1280),
         }
         w, h = size_map.get(size, (1024, 1024))
-        
-        # Pollinations free image generation
+
         image_url = f"https://image.pollinations.ai/prompt/{prompt}?width={w}&height={h}&nologo=true&seed={int(datetime.now().timestamp())}"
-        
+
         return json.dumps({
             "type": "image",
             "image_url": image_url,
@@ -947,7 +928,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     tools_used = []
     pending_actions = []  # music, download, image
 
-        for round_num in range(max_rounds):
+    for round_num in range(max_rounds):
         current_messages.append({
             "role": "assistant",
             "content": resp.content or "",
@@ -973,7 +954,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 })
 
             tool_result = await execute_tool_call(fn_name, fn_args)
-            
+
             try:
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict) and result_data.get("type") == "download":
@@ -982,7 +963,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                     pending_actions.append(result_data)
             except (json.JSONDecodeError, TypeError):
                 pass
-            
+
             log.info(f"✅ Round {round_num + 1}: {fn_name}")
             tools_used.append(fn_name)
 
@@ -999,11 +980,10 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             # Coba tanpa tool_calls di message terakhir kalau error
             if "tool" in str(resp.error).lower():
                 log.warning("Tool error, retrying without tool context...")
-                # Remove tool-related messages and retry
                 clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
-                clean_messages.append({"role": "user", "content": f"Based on the information gathered, please provide your response."})
+                clean_messages.append({"role": "user", "content": "Based on the information gathered, please provide your response."})
                 resp = await prov.chat(clean_messages, model)
-            
+
             if not resp.success:
                 return None, None, pending_actions
 
@@ -1097,54 +1077,54 @@ Respond in the same language as the user.""",
 async def handle_message(content: str, settings: Dict, channel_id: int = 0, user_id: int = 0, user_name: str = "User") -> Dict:
     mode = settings.get("active_mode", "normal")
     guild_id = settings.get("guild_id", 0)
-    
+
     history = get_conversation(guild_id, channel_id, limit=30)
-    
+
     # =========================================================
     # STEP 1: Try smart skills (time, weather, calendar)
     # =========================================================
-    
+
     skill_result = None
     try:
         from skills.detector import SkillDetector
         skill_result = await SkillDetector.detect_and_execute(content)
     except Exception as e:
         log.warning(f"Skill detection error: {e}")
-    
+
     if skill_result:
         profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
         prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
-        
+
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPTS["with_skill"]},
             *[{"role": m["role"], "content": m["content"]} for m in history],
             {"role": "user", "content": f"[{user_name}] bertanya: {content}\n\nHasil tool:\n{skill_result}\n\nSampaikan informasi ini secara natural."}
         ]
-        
+
         resp, fb_note = await execute_with_fallback(msgs, mode, prov, mid, guild_id)
         text = strip_think_tags(resp.content) if resp.success else skill_result
-        
+
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
-        
+
         return {"text": text, "fallback_note": fb_note if resp.success else None, "actions": []}
-    
+
     # =========================================================
     # STEP 2: Auto-detect mode
     # =========================================================
-    
+
     if settings.get("auto_detect"):
         detected = ModeDetector.detect(content)
         if detected != "normal":
             mode = detected
-    
-        # =========================================================
+
+    # =========================================================
     # STEP 2B: Auto Tool Calling
     # =========================================================
-    
+
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
-    
+
     from core.providers import supports_tool_calling
     if supports_tool_calling(prov):
         system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
@@ -1154,48 +1134,48 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
                 formatted_history.append({"role": "user", "content": f"[{msg['user_name']}]: {msg['content']}"})
             else:
                 formatted_history.append({"role": msg["role"], "content": msg["content"]})
-        
+
         voice_ctx = ""
         if settings.get("user_in_voice"):
             voice_ctx = f" [in voice channel: {settings.get('user_voice_channel', 'yes')}]"
         else:
             voice_ctx = " [not in voice channel]"
-        
+
         # ── URL Detection: inject hint so AI uses fetch_url ──
         user_content = f"[{user_name}]{voice_ctx}: {content}"
         urls = re.findall(r'https?://[^\s<>"\']+', content)
         if urls:
             url_hint = f"\n\n[System hint: User shared {len(urls)} URL(s). Use fetch_url tool to read the content. URLs: {', '.join(urls)}]"
             user_content += url_hint
-        
+
         tool_msgs = [
             {"role": "system", "content": system_prompt},
             *formatted_history,
             {"role": "user", "content": user_content}
         ]
-        
+
         tool_resp, tool_note, tool_actions = await handle_with_tools(tool_msgs, prov, mid, guild_id)
         if tool_resp and tool_resp.success:
             text = strip_think_tags(tool_resp.content) or "Tidak ada jawaban."
             save_message(guild_id, channel_id, user_id, user_name, "user", content)
             save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
             return {"text": text, "fallback_note": tool_note, "actions": tool_actions}
-    
+
     # =========================================================
     # STEP 3: Regular AI chat (Fallback)
     # =========================================================
-    
+
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
-    
+
     formatted_history = []
     for msg in history:
         if msg["role"] == "user" and msg.get("user_name"):
             formatted_history.append({"role": "user", "content": f"[{msg['user_name']}]: {msg['content']}"})
         else:
             formatted_history.append({"role": msg["role"], "content": msg["content"]})
-    
+
     if mode == "search" and not is_grounding_model(prov, mid):
         search_res = await do_search(content, profile.get("engine", "duckduckgo"))
         msgs = [
@@ -1209,9 +1189,9 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             *formatted_history,
             {"role": "user", "content": f"[{user_name}]: {content}"}
         ]
-    
+
     resp, fb_note = await execute_with_fallback(msgs, mode, prov, mid, guild_id)
-    
+
     if resp.success:
         text = strip_think_tags(resp.content) or "Tidak ada jawaban."
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
