@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 # ============================================================
 # FIX #3: Hapus "puter" — PuterProvider tidak handle tools
 # ============================================================
-TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova"}
+TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova", "Pollinations", "routeway"}
 
 def supports_tool_calling(provider_name: str) -> bool:
     return provider_name in TOOL_CAPABLE_PROVIDERS
