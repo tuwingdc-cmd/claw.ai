@@ -4,6 +4,9 @@ Multi-provider AI with fallback system
 Settings persist via SQLite!
 """
 
+import aiohttp
+import tempfile
+import os
 import discord
 from discord.ext import commands
 import wavelink
@@ -265,82 +268,132 @@ async def execute_download_action(message: discord.Message, action: dict):
         return
     
     log.info(f"📥 Downloading: {video_url[:80]}")
+    status_msg = await message.channel.send(f"⏳ Downloading video dari **{platform.title()}**...")
     
     try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": action.get("original_url", video_url),
+        }
+        
         async with aiohttp.ClientSession() as session:
-            # First, check file size with HEAD request
-            try:
-                async with session.head(video_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as head_resp:
-                    content_length = int(head_resp.headers.get("Content-Length", 0))
-            except:
-                content_length = 0
-            
-            # If too large (>25MB), send link instead
-            if content_length > 25_000_000:
-                embed = discord.Embed(
-                    title=f"📥 Video dari {platform.title()}",
-                    description=f"Video terlalu besar ({content_length / 1_000_000:.1f} MB) untuk upload ke Discord.\n\n**[Download di sini]({video_url})**",
-                    color=0x1DB954
-                )
-                embed.set_footer(text="⏰ Link mungkin expire dalam beberapa jam")
-                await message.channel.send(embed=embed)
-                return
-            
-            # Download video
-            async with session.get(video_url, timeout=aiohttp.ClientTimeout(total=120), allow_redirects=True) as resp:
+            async with session.get(
+                video_url, 
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120), 
+                allow_redirects=True
+            ) as resp:
                 if resp.status != 200:
-                    await message.channel.send(f"❌ Gagal download video (HTTP {resp.status})")
-                    return
+                    # Cobalt URL expired — retry with fresh URL
+                    log.warning(f"📥 First attempt failed HTTP {resp.status}, retrying...")
+                    fresh = await _retry_download(action.get("original_url", ""), platform)
+                    if fresh:
+                        video_url = fresh
+                    else:
+                        await status_msg.edit(content=f"❌ Gagal download video (HTTP {resp.status}). URL mungkin sudah expired.")
+                        return
                 
-                # Stream to temp file
-                temp_dir = tempfile.mkdtemp()
-                temp_path = os.path.join(temp_dir, filename)
+                # Re-fetch if we got a new URL
+                if resp.status != 200:
+                    async with session.get(video_url, headers=headers, timeout=aiohttp.ClientTimeout(total=120), allow_redirects=True) as resp2:
+                        resp = resp2
                 
-                total_size = 0
-                with open(temp_path, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(8192):
-                        total_size += len(chunk)
-                        if total_size > 25_000_000:
-                            # Too large during download
-                            f.close()
-                            os.unlink(temp_path)
-                            os.rmdir(temp_dir)
-                            
-                            embed = discord.Embed(
-                                title=f"📥 Video dari {platform.title()}",
-                                description=f"Video terlalu besar untuk Discord.\n\n**[Download di sini]({video_url})**",
-                                color=0x1DB954
-                            )
-                            await message.channel.send(embed=embed)
-                            return
-                        f.write(chunk)
-                
-                # Upload to Discord
-                file_size_mb = total_size / 1_000_000
-                log.info(f"📥 Downloaded {file_size_mb:.1f}MB, uploading to Discord...")
-                
-                discord_file = discord.File(temp_path, filename=filename)
-                await message.channel.send(
-                    content=f"📥 Video dari **{platform.title()}** ({file_size_mb:.1f} MB)",
-                    file=discord_file
-                )
-                
-                # Cleanup
-                os.unlink(temp_path)
-                os.rmdir(temp_dir)
-                log.info(f"✅ Video uploaded: {filename}")
+                if resp.status == 200:
+                    temp_dir = tempfile.mkdtemp()
+                    temp_path = os.path.join(temp_dir, filename)
+                    
+                    total_size = 0
+                    with open(temp_path, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(8192):
+                            total_size += len(chunk)
+                            if total_size > 25_000_000:
+                                break
+                            f.write(chunk)
+                    
+                    if total_size > 25_000_000:
+                        os.unlink(temp_path)
+                        os.rmdir(temp_dir)
+                        await status_msg.edit(content=f"❌ Video terlalu besar ({total_size / 1_000_000:.1f} MB). Discord limit 25 MB.")
+                        return
+                    
+                    if total_size < 1000:
+                        # Too small = probably error page
+                        os.unlink(temp_path)
+                        os.rmdir(temp_dir)
+                        await status_msg.edit(content="❌ Download gagal — video mungkin dilindungi atau URL expired.")
+                        return
+                    
+                    file_size_mb = total_size / 1_000_000
+                    log.info(f"📥 Downloaded {file_size_mb:.1f}MB, uploading...")
+                    
+                    await status_msg.edit(content=f"⬆️ Uploading ({file_size_mb:.1f} MB)...")
+                    
+                    discord_file = discord.File(temp_path, filename=filename)
+                    await message.channel.send(
+                        content=f"📥 Video dari **{platform.title()}** ({file_size_mb:.1f} MB)",
+                        file=discord_file
+                    )
+                    
+                    await status_msg.delete()
+                    
+                    os.unlink(temp_path)
+                    os.rmdir(temp_dir)
+                    log.info(f"✅ Video uploaded: {filename}")
+                else:
+                    await status_msg.edit(content="❌ Gagal download video.")
     
     except asyncio.TimeoutError:
-        await message.channel.send("❌ Download timeout — video terlalu besar atau server lambat.")
+        await status_msg.edit(content="❌ Download timeout — coba lagi nanti.")
     except Exception as e:
         log.error(f"📥 Download error: {e}")
-        # Send link as fallback
-        embed = discord.Embed(
-            title=f"📥 Video dari {platform.title()}",
-            description=f"Gagal upload otomatis.\n\n**[Download manual di sini]({video_url})**",
-            color=0xFF5555
-        )
-        await message.channel.send(embed=embed)
+        await status_msg.edit(content=f"❌ Error: {str(e)[:100]}")
+
+
+async def _retry_download(original_url: str, platform: str) -> Optional[str]:
+    """Retry getting fresh download URL when first one expired"""
+    if not original_url:
+        return None
+    
+    log.info(f"🔄 Retrying fresh URL for: {original_url[:60]}")
+    
+    # Try Cobalt again
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.cobalt.tools/api/json",
+                json={
+                    "url": original_url,
+                    "vCodec": "h264",
+                    "vQuality": "720",
+                    "isAudioOnly": False,
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("status") in ["stream", "redirect"]:
+                        return data.get("url")
+    except Exception as e:
+        log.warning(f"Retry cobalt error: {e}")
+    
+    # Try yt-dlp
+    try:
+        import yt_dlp
+        def _get():
+            with yt_dlp.YoutubeDL({"quiet": True, "format": "best[height<=720]", "skip_download": True}) as ydl:
+                info = ydl.extract_info(original_url, download=False)
+                return info.get("url")
+        url = await asyncio.get_event_loop().run_in_executor(None, _get)
+        if url:
+            return url
+    except:
+        pass
+    
+    return None
 
 # ============================================================
 # IMAGE ACTION HANDLER — Send generated image
