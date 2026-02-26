@@ -1,5 +1,5 @@
 """
-Message Handler + DB-backed Conversation Memory + Smart Skills + Tools + Music
+Message Handler + DB-backed Conversation Memory + Smart Skills + Tools + Music + URL Fetch
 """
 import json
 import math
@@ -7,6 +7,8 @@ import logging
 import re
 import asyncio
 import aiohttp
+import os
+import tempfile
 from typing import Dict, List, Optional
 from datetime import datetime
 from core.providers import ProviderFactory, AIResponse
@@ -149,7 +151,396 @@ async def do_translate(text: str, target_lang: str, style: str = "natural") -> s
     return f"[Translation failed] {text}"
 
 # ============================================================
-# TOOL DEFINITIONS (6 Tools)
+# URL FETCH — Universal URL Reader
+# ============================================================
+
+def _detect_platform(url: str) -> str:
+    """Detect platform from URL"""
+    url_lower = url.lower()
+    if "twitter.com" in url_lower or "x.com" in url_lower:
+        return "twitter"
+    elif "instagram.com" in url_lower:
+        return "instagram"
+    elif "tiktok.com" in url_lower:
+        return "tiktok"
+    elif "youtube.com" in url_lower or "youtu.be" in url_lower:
+        return "youtube"
+    elif "reddit.com" in url_lower:
+        return "reddit"
+    elif "github.com" in url_lower:
+        return "github"
+    return "generic"
+
+def _extract_youtube_id(url: str) -> Optional[str]:
+    """Extract YouTube video ID from URL"""
+    patterns = [
+        r'(?:v=|/v/|youtu\.be/)([a-zA-Z0-9_-]{11})',
+        r'(?:shorts/)([a-zA-Z0-9_-]{11})',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+async def _fetch_via_jina(url: str) -> Optional[str]:
+    """Fetch URL content via Jina Reader — works for most websites"""
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        headers = {
+            "Accept": "text/markdown",
+            "User-Agent": "Mozilla/5.0 (compatible; DiscordBot/1.0)"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                jina_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+                if resp.status == 200:
+                    content = await resp.text()
+                    # Trim to reasonable size for AI
+                    if len(content) > 8000:
+                        content = content[:8000] + "\n\n[... content trimmed ...]"
+                    log.info(f"📄 Jina Reader OK: {url[:60]}")
+                    return content
+                else:
+                    log.warning(f"📄 Jina Reader HTTP {resp.status} for {url[:60]}")
+    except Exception as e:
+        log.warning(f"📄 Jina Reader error: {e}")
+    return None
+
+async def _fetch_via_bs4(url: str) -> Optional[str]:
+    """Fallback: fetch with requests + BeautifulSoup"""
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        log.warning("beautifulsoup4 not installed")
+        return None
+    
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=True
+            ) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Remove script, style, nav, footer
+                    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
+                        tag.decompose()
+                    
+                    # Try article content first
+                    article = soup.find("article")
+                    if article:
+                        text = article.get_text(separator="\n", strip=True)
+                    else:
+                        # Fallback to main or body
+                        main = soup.find("main") or soup.find("body")
+                        text = main.get_text(separator="\n", strip=True) if main else ""
+                    
+                    # Clean up
+                    lines = [line.strip() for line in text.split("\n") if line.strip()]
+                    text = "\n".join(lines)
+                    
+                    if len(text) > 6000:
+                        text = text[:6000] + "\n\n[... content trimmed ...]"
+                    
+                    if len(text) > 100:
+                        log.info(f"📄 BS4 fetch OK: {url[:60]}")
+                        return text
+    except Exception as e:
+        log.warning(f"📄 BS4 error: {e}")
+    return None
+
+async def _fetch_twitter(url: str) -> Optional[str]:
+    """Fetch Twitter/X content via Nitter proxies or Jina"""
+    nitter_instances = [
+        "nitter.net",
+        "nitter.privacydev.net",
+        "nitter.poast.org",
+    ]
+    
+    # Extract tweet path
+    match = re.search(r'(?:twitter\.com|x\.com)/(\w+)/status/(\d+)', url)
+    if not match:
+        return await _fetch_via_jina(url)
+    
+    username, tweet_id = match.group(1), match.group(2)
+    
+    # Try Nitter instances
+    for instance in nitter_instances:
+        try:
+            nitter_url = f"https://{instance}/{username}/status/{tweet_id}"
+            content = await _fetch_via_jina(nitter_url)
+            if content and len(content) > 50:
+                return f"[Tweet from @{username}]\n\n{content}"
+        except:
+            continue
+    
+    # Fallback to direct Jina on original URL
+    content = await _fetch_via_jina(url)
+    if content:
+        return f"[Tweet from @{username}]\n\n{content}"
+    
+    return None
+
+async def _fetch_youtube_transcript(url: str) -> Optional[str]:
+    """Fetch YouTube video info + transcript"""
+    video_id = _extract_youtube_id(url)
+    if not video_id:
+        return None
+    
+    parts = []
+    
+    # Step 1: Get video info via oembed (always works)
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(oembed_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    parts.append(f"Title: {data.get('title', 'Unknown')}")
+                    parts.append(f"Channel: {data.get('author_name', 'Unknown')}")
+    except:
+        pass
+    
+    # Step 2: Try to get transcript via yt-dlp
+    try:
+        import yt_dlp
+        
+        def _get_info():
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["id", "en"],
+                "subtitlesformat": "json3",
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        
+        info = await asyncio.get_event_loop().run_in_executor(None, _get_info)
+        
+        if info:
+            if not parts:
+                parts.append(f"Title: {info.get('title', 'Unknown')}")
+                parts.append(f"Channel: {info.get('channel', info.get('uploader', 'Unknown'))}")
+            
+            duration = info.get("duration", 0)
+            if duration:
+                mins, secs = divmod(duration, 60)
+                parts.append(f"Duration: {int(mins)}:{int(secs):02d}")
+            
+            view_count = info.get("view_count")
+            if view_count:
+                parts.append(f"Views: {view_count:,}")
+            
+            desc = info.get("description", "")
+            if desc:
+                parts.append(f"Description: {desc[:500]}")
+            
+            # Get subtitles/transcript
+            subtitles = info.get("subtitles", {})
+            auto_subs = info.get("automatic_captions", {})
+            
+            transcript_text = None
+            
+            # Try manual subs first, then auto
+            for sub_source in [subtitles, auto_subs]:
+                for lang in ["id", "en"]:
+                    if lang in sub_source:
+                        for fmt in sub_source[lang]:
+                            if fmt.get("ext") == "json3":
+                                try:
+                                    sub_url = fmt["url"]
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(sub_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                            if resp.status == 200:
+                                                sub_data = await resp.json()
+                                                events = sub_data.get("events", [])
+                                                words = []
+                                                for event in events:
+                                                    segs = event.get("segs", [])
+                                                    for seg in segs:
+                                                        w = seg.get("utf8", "").strip()
+                                                        if w and w != "\n":
+                                                            words.append(w)
+                                                transcript_text = " ".join(words)
+                                except:
+                                    pass
+                        if transcript_text:
+                            break
+                if transcript_text:
+                    break
+            
+            if transcript_text:
+                if len(transcript_text) > 5000:
+                    transcript_text = transcript_text[:5000] + "... [trimmed]"
+                parts.append(f"\nTranscript:\n{transcript_text}")
+            
+            log.info(f"🎬 YouTube info OK: {video_id}")
+            return "\n".join(parts)
+    
+    except ImportError:
+        log.warning("yt-dlp not installed, falling back to Jina")
+    except Exception as e:
+        log.warning(f"yt-dlp error: {e}")
+    
+    # Fallback to Jina
+    jina_content = await _fetch_via_jina(url)
+    if jina_content:
+        if parts:
+            return "\n".join(parts) + "\n\n" + jina_content
+        return jina_content
+    
+    return "\n".join(parts) if parts else None
+
+async def _get_video_download_url(url: str) -> Optional[dict]:
+    """Get direct video download URL via Cobalt API"""
+    cobalt_instances = [
+        "https://api.cobalt.tools",
+    ]
+    
+    for instance in cobalt_instances:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{instance}/api/json",
+                    json={
+                        "url": url,
+                        "vCodec": "h264",
+                        "vQuality": "720",
+                        "isAudioOnly": False,
+                        "filenamePattern": "basic",
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        status = data.get("status")
+                        
+                        if status in ["stream", "redirect"]:
+                            log.info(f"🎬 Cobalt OK: {url[:60]}")
+                            return {
+                                "url": data.get("url"),
+                                "filename": data.get("filename", "video.mp4"),
+                                "status": status,
+                            }
+                        elif status == "picker":
+                            # Multiple options (e.g., IG carousel)
+                            picker = data.get("picker", [])
+                            if picker:
+                                return {
+                                    "url": picker[0].get("url"),
+                                    "filename": "video.mp4",
+                                    "status": "stream",
+                                }
+                        elif status == "error":
+                            log.warning(f"Cobalt error: {data.get('text', 'unknown')}")
+                    else:
+                        log.warning(f"Cobalt HTTP {resp.status}")
+        except Exception as e:
+            log.warning(f"Cobalt instance {instance} error: {e}")
+            continue
+    
+    # Fallback to yt-dlp for direct URL
+    try:
+        import yt_dlp
+        
+        def _get_url():
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "format": "best[height<=720][ext=mp4]/best[height<=720]/best",
+                "skip_download": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return {
+                    "url": info.get("url"),
+                    "filename": f"{info.get('title', 'video')[:50]}.mp4",
+                    "status": "stream",
+                    "filesize": info.get("filesize") or info.get("filesize_approx"),
+                }
+        
+        result = await asyncio.get_event_loop().run_in_executor(None, _get_url)
+        if result and result.get("url"):
+            log.info(f"🎬 yt-dlp URL OK: {url[:60]}")
+            return result
+    except ImportError:
+        log.warning("yt-dlp not installed")
+    except Exception as e:
+        log.warning(f"yt-dlp error: {e}")
+    
+    return None
+
+async def do_fetch_url(url: str, action: str = "read") -> str:
+    """Universal URL fetcher — read content or get download URL"""
+    platform = _detect_platform(url)
+    
+    log.info(f"📄 Fetching URL: {url[:80]} | platform={platform} | action={action}")
+    
+    # ── DOWNLOAD ACTION ──
+    if action == "download":
+        download_info = await _get_video_download_url(url)
+        if download_info and download_info.get("url"):
+            return json.dumps({
+                "type": "download",
+                "video_url": download_info["url"],
+                "filename": download_info.get("filename", "video.mp4"),
+                "platform": platform,
+                "original_url": url,
+            })
+        return "Cannot download video from this URL. The content might be protected or not a video."
+    
+    # ── READ/SUMMARIZE ACTION ──
+    content = None
+    
+    if platform == "twitter":
+        content = await _fetch_twitter(url)
+    
+    elif platform == "youtube":
+        content = await _fetch_youtube_transcript(url)
+    
+    elif platform in ("tiktok", "instagram", "reddit"):
+        # Try Jina first for metadata
+        content = await _fetch_via_jina(url)
+    
+    elif platform == "github":
+        content = await _fetch_via_jina(url)
+    
+    # Generic / fallback
+    if not content:
+        content = await _fetch_via_jina(url)
+    
+    if not content:
+        content = await _fetch_via_bs4(url)
+    
+    if not content:
+        return (
+            f"Cannot access content from {url}. "
+            f"Possible reasons: website requires login, anti-bot protection, "
+            f"or content is not publicly accessible."
+        )
+    
+    return f"[Content from {platform}: {url}]\n\n{content}"
+
+
+# ============================================================
+# TOOL DEFINITIONS (8 Tools)
 # ============================================================
 
 WEB_SEARCH_TOOL = {
@@ -270,7 +661,6 @@ PLAY_MUSIC_TOOL = {
             "Control music playback in Discord voice channel. "
             "Use when user wants to: play a song, skip track, stop/disconnect music, "
             "pause, or resume playback. "
-            "User MUST be in a voice channel for 'play' action. "
             "If user is NOT in a voice channel, tell them to join one first."
         ),
         "parameters": {
@@ -279,11 +669,11 @@ PLAY_MUSIC_TOOL = {
                 "action": {
                     "type": "string",
                     "enum": ["play", "skip", "stop", "pause", "resume"],
-                    "description": "Music action. play=play a song, skip=next track, stop=disconnect, pause/resume=toggle playback"
+                    "description": "Music action"
                 },
                 "query": {
                     "type": "string",
-                    "description": "Song name, artist name, or URL. Required for 'play' action. Example: 'Bohemian Rhapsody Queen'"
+                    "description": "Song name, artist, or URL. Required for 'play' action."
                 }
             },
             "required": ["action"]
@@ -291,7 +681,72 @@ PLAY_MUSIC_TOOL = {
     }
 }
 
-TOOLS_LIST = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL]
+FETCH_URL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "fetch_url",
+        "description": (
+            "Read, summarize, or download content from any URL link. "
+            "Supports: Twitter/X, Instagram, TikTok, YouTube, Reddit, GitHub, "
+            "news articles, blogs, Medium, and any website. "
+            "\n"
+            "For YouTube: can read video transcript/subtitles to summarize video content. "
+            "For Twitter: reads tweet text, engagement stats. "
+            "For articles/blogs: reads full article text. "
+            "For TikTok/Instagram: reads caption and metadata. "
+            "\n"
+            "Use action='download' to get video download URL (TikTok no watermark, IG, Twitter, YT). "
+            "Use action='read' or 'summarize' to read the content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The full URL to fetch"
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "summarize", "download"],
+                    "description": "read=get content, summarize=get content for AI summary, download=get video download URL. Default: read"
+                }
+            },
+            "required": ["url"]
+        }
+    }
+}
+
+GENERATE_IMAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_image",
+        "description": (
+            "Generate an image from text description using AI. "
+            "Use when user asks to: create/generate/make/draw an image, picture, photo, artwork. "
+            "Describe the image in English for best results."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Image description in English. Be detailed for better results. Example: 'a cute cat wearing astronaut suit floating in space, digital art, high quality'"
+                },
+                "size": {
+                    "type": "string",
+                    "enum": ["square", "wide", "tall"],
+                    "description": "Image aspect ratio. square=1:1, wide=16:9, tall=9:16. Default: square"
+                }
+            },
+            "required": ["prompt"]
+        }
+    }
+}
+
+TOOLS_LIST = [
+    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL,
+    TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, GENERATE_IMAGE_TOOL
+]
 
 
 # ============================================================
@@ -313,7 +768,7 @@ class ModeDetector:
 
 
 # ============================================================
-# TOOL CALL EXECUTOR — 6 Tools
+# TOOL CALL EXECUTOR — 8 Tools
 # ============================================================
 
 async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
@@ -386,7 +841,6 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         action = tool_args.get("action", "play")
         query = tool_args.get("query", "")
         log.info(f"🎵 Tool: play_music(action={action}, query={query})")
-        # Actual execution happens in main.py — here we just confirm to the AI
         if action == "play":
             return f"Music command accepted. Now playing '{query}' in the user's voice channel."
         elif action == "skip":
@@ -399,6 +853,36 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             return "Resuming playback."
         return f"Music action '{action}' accepted."
 
+    # ── FETCH URL ──
+    elif tool_name == "fetch_url":
+        url = tool_args.get("url", "")
+        action = tool_args.get("action", "read")
+        log.info(f"📄 Tool: fetch_url({url[:60]}, action={action})")
+        return await do_fetch_url(url, action)
+
+    # ── GENERATE IMAGE ──
+    elif tool_name == "generate_image":
+        prompt = tool_args.get("prompt", "")
+        size = tool_args.get("size", "square")
+        log.info(f"🖼️ Tool: generate_image(prompt={prompt[:50]}, size={size})")
+        
+        size_map = {
+            "square": (1024, 1024),
+            "wide": (1280, 720),
+            "tall": (720, 1280),
+        }
+        w, h = size_map.get(size, (1024, 1024))
+        
+        # Pollinations free image generation
+        image_url = f"https://image.pollinations.ai/prompt/{prompt}?width={w}&height={h}&nologo=true&seed={int(datetime.now().timestamp())}"
+        
+        return json.dumps({
+            "type": "image",
+            "image_url": image_url,
+            "prompt": prompt,
+            "size": size,
+        })
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -410,7 +894,6 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                              guild_id: int = 0) -> tuple:
     """
     Returns: (AIResponse, note_string, actions_list)
-    actions_list contains music actions for main.py to execute.
     """
     from core.providers import supports_tool_calling
 
@@ -431,11 +914,10 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     if not tool_calls:
         return resp, None, []
 
-    # ── Multi-round tool calling loop ──
     max_rounds = 3
     current_messages = list(messages)
     tools_used = []
-    music_actions = []  # Collect music actions for main.py
+    pending_actions = []  # music, download, image
 
     for round_num in range(max_rounds):
         current_messages.append({
@@ -454,43 +936,55 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
-            # Capture music actions BEFORE executing
+            # Capture actions BEFORE executing
             if fn_name == "play_music":
-                music_actions.append({
+                pending_actions.append({
                     "type": "music",
                     "action": fn_args.get("action", "play"),
                     "query": fn_args.get("query", ""),
                 })
 
             tool_result = await execute_tool_call(fn_name, fn_args)
+            
+            # Check if tool returned a structured action (download, image)
+            try:
+                result_data = json.loads(tool_result)
+                if isinstance(result_data, dict) and result_data.get("type") == "download":
+                    pending_actions.append(result_data)
+                elif isinstance(result_data, dict) and result_data.get("type") == "image":
+                    pending_actions.append(result_data)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
             log.info(f"✅ Round {round_num + 1}: {fn_name}")
             tools_used.append(fn_name)
 
             current_messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
-                "content": tool_result
+                "content": tool_result if not tool_result.startswith("{") else f"Result: {tool_result}"
             })
 
         resp = await prov.chat(current_messages, model)
 
         if not resp.success:
-            return None, None, music_actions
+            return None, None, pending_actions
 
         tool_calls = getattr(resp, "tool_calls", None)
         if not tool_calls:
             _log_request(guild_id, prov_name, model, True, resp.latency)
             tool_icons = {
                 "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
-                "calculate": "🔢", "translate": "🌐", "play_music": "🎵"
+                "calculate": "🔢", "translate": "🌐", "play_music": "🎵",
+                "fetch_url": "📄", "generate_image": "🖼️"
             }
             unique_tools = list(dict.fromkeys(tools_used))
             icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
             note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
-            return resp, note, music_actions
+            return resp, note, pending_actions
 
     _log_request(guild_id, prov_name, model, True, resp.latency)
-    return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", music_actions
+    return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", pending_actions
 
 
 # ============================================================
@@ -534,7 +1028,12 @@ Just answer naturally as if you already knew the information.
 Never say "I cannot access real-time data" when tool results are provided.
 
 For music: you can play, skip, pause, resume, and stop music.
-If the user asks you to play music but is NOT in a voice channel, tell them to join one first.""",
+If user is NOT in a voice channel, tell them to join one first.
+
+For URLs: you can read articles, tweets, YouTube transcripts, and social media posts.
+You can also download videos from TikTok (no watermark), Instagram, Twitter, YouTube.
+
+For images: you can generate images from text descriptions.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
 Multiple users may ask questions — keep track of who asked what.
@@ -601,7 +1100,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             mode = detected
     
     # =========================================================
-    # STEP 2B: Auto Tool Calling (AI decides — includes music!)
+    # STEP 2B: Auto Tool Calling
     # =========================================================
     
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
@@ -617,7 +1116,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             else:
                 formatted_history.append({"role": msg["role"], "content": msg["content"]})
         
-        # Add voice channel context so AI knows if user can play music
         voice_ctx = ""
         if settings.get("user_in_voice"):
             voice_ctx = f" [in voice channel: {settings.get('user_voice_channel', 'yes')}]"
@@ -638,7 +1136,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             return {"text": text, "fallback_note": tool_note, "actions": tool_actions}
     
     # =========================================================
-    # STEP 3: Regular AI chat with DB memory (Fallback)
+    # STEP 3: Regular AI chat (Fallback)
     # =========================================================
     
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
