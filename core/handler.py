@@ -1,5 +1,5 @@
 """
-Message Handler + DB-backed Conversation Memory + Smart Skills + Tools
+Message Handler + DB-backed Conversation Memory + Smart Skills + Tools + Music
 """
 import json
 import math
@@ -19,7 +19,7 @@ from config import API_KEYS, FALLBACK_CHAINS, PROVIDERS
 log = logging.getLogger(__name__)
 
 # Re-export for backward compatibility
-MEMORY_EXPIRE_MINUTES = 0  # No expiry, DB-based now
+MEMORY_EXPIRE_MINUTES = 0
 
 # ============================================================
 # REQUEST LOGS
@@ -44,9 +44,6 @@ def strip_think_tags(content: str) -> str:
 # ============================================================
 
 async def do_search(query: str, engine: str = "auto") -> str:
-    """Search with Tavily first (more accurate), fallback to DuckDuckGo"""
-
-    # ── TAVILY (lebih akurat untuk data terkini) ──
     tavily_key = API_KEYS.get("tavily")
     if tavily_key:
         try:
@@ -65,17 +62,14 @@ async def do_search(query: str, engine: str = "auto") -> str:
                     if resp.status == 200:
                         data = await resp.json()
                         parts = []
-
                         if data.get("answer"):
                             parts.append(f"Summary: {data['answer']}")
-
                         for i, r in enumerate(data.get("results", []), 1):
                             parts.append(
                                 f"{i}. {r.get('title', 'No title')}\n"
                                 f"   {r.get('content', '')[:200]}\n"
                                 f"   {r.get('url', '')}"
                             )
-
                         if parts:
                             log.info(f"🔍 Tavily search OK: {query}")
                             return "\n\n".join(parts)
@@ -84,7 +78,6 @@ async def do_search(query: str, engine: str = "auto") -> str:
         except Exception as e:
             log.warning(f"Tavily error, fallback to DuckDuckGo: {e}")
 
-    # ── DUCKDUCKGO (fallback, gratis unlimited) ──
     try:
         from duckduckgo_search import DDGS
         def _s():
@@ -109,10 +102,6 @@ def is_grounding_model(p, m): return (p, m) in GROUNDING_MODELS
 # ============================================================
 
 async def do_translate(text: str, target_lang: str, style: str = "natural") -> str:
-    """
-    Translate using AI for natural, native-sounding results.
-    Understands slang, idioms, and context.
-    """
     style_prompts = {
         "natural": (
             "You are a native bilingual translator. Translate naturally as a native speaker would say it. "
@@ -136,7 +125,6 @@ async def do_translate(text: str, target_lang: str, style: str = "natural") -> s
         {"role": "user", "content": f"Translate to {target_lang}:\n\n{text}"}
     ]
 
-    # Pakai model cepat dan ringan untuk translate
     translate_chains = [
         ("groq", "llama-3.1-8b-instant"),
         ("groq", "llama-3.3-70b-versatile"),
@@ -161,7 +149,7 @@ async def do_translate(text: str, target_lang: str, style: str = "natural") -> s
     return f"[Translation failed] {text}"
 
 # ============================================================
-# TOOL DEFINITIONS (5 Tools)
+# TOOL DEFINITIONS (6 Tools)
 # ============================================================
 
 WEB_SEARCH_TOOL = {
@@ -261,14 +249,8 @@ TRANSLATE_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "The text to translate"
-                },
-                "target_language": {
-                    "type": "string",
-                    "description": "Target language, e.g. English, Indonesian, Japanese, Korean, Spanish"
-                },
+                "text": {"type": "string", "description": "The text to translate"},
+                "target_language": {"type": "string", "description": "Target language, e.g. English, Indonesian, Japanese, Korean, Spanish"},
                 "style": {
                     "type": "string",
                     "enum": ["natural", "formal", "casual"],
@@ -280,7 +262,36 @@ TRANSLATE_TOOL = {
     }
 }
 
-TOOLS_LIST = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL, TRANSLATE_TOOL]
+PLAY_MUSIC_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "play_music",
+        "description": (
+            "Control music playback in Discord voice channel. "
+            "Use when user wants to: play a song, skip track, stop/disconnect music, "
+            "pause, or resume playback. "
+            "User MUST be in a voice channel for 'play' action. "
+            "If user is NOT in a voice channel, tell them to join one first."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["play", "skip", "stop", "pause", "resume"],
+                    "description": "Music action. play=play a song, skip=next track, stop=disconnect, pause/resume=toggle playback"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Song name, artist name, or URL. Required for 'play' action. Example: 'Bohemian Rhapsody Queen'"
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
+TOOLS_LIST = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL]
 
 
 # ============================================================
@@ -302,7 +313,7 @@ class ModeDetector:
 
 
 # ============================================================
-# TOOL CALL EXECUTOR — 5 Tools
+# TOOL CALL EXECUTOR — 6 Tools
 # ============================================================
 
 async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
@@ -344,15 +355,12 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         expression = tool_args.get("expression", "")
         log.info(f"🔢 Tool: calculate({expression})")
         try:
-            # Preprocess common patterns
             expr = expression.replace("^", "**").replace("×", "*").replace("÷", "/")
-            # Handle "X% of Y"
             pct_match = re.match(r'([\d.]+)%\s*of\s*([\d.]+)', expr, re.IGNORECASE)
             if pct_match:
                 pct, val = float(pct_match.group(1)), float(pct_match.group(2))
                 result = pct / 100 * val
                 return f"{expression} = {result}"
-            # Safe eval
             allowed = {
                 "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
                 "tan": math.tan, "log": math.log, "log10": math.log10,
@@ -373,6 +381,24 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         log.info(f"🌐 Tool: translate(→{target}, style={style})")
         return await do_translate(text, target, style)
 
+    # ── PLAY MUSIC ──
+    elif tool_name == "play_music":
+        action = tool_args.get("action", "play")
+        query = tool_args.get("query", "")
+        log.info(f"🎵 Tool: play_music(action={action}, query={query})")
+        # Actual execution happens in main.py — here we just confirm to the AI
+        if action == "play":
+            return f"Music command accepted. Now playing '{query}' in the user's voice channel."
+        elif action == "skip":
+            return "Skipping to the next track."
+        elif action == "stop":
+            return "Stopping music and disconnecting from voice channel."
+        elif action == "pause":
+            return "Pausing current track."
+        elif action == "resume":
+            return "Resuming playback."
+        return f"Music action '{action}' accepted."
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -383,33 +409,33 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
 async def handle_with_tools(messages: list, prov_name: str, model: str,
                              guild_id: int = 0) -> tuple:
     """
-    Kirim ke AI dengan tools, handle tool_calls response,
-    jalankan SEMUA tools, kirim balik ke AI.
-    Support multi-round (AI bisa panggil tool berkali-kali).
+    Returns: (AIResponse, note_string, actions_list)
+    actions_list contains music actions for main.py to execute.
     """
     from core.providers import supports_tool_calling
 
     if not supports_tool_calling(prov_name):
-        return None, None
+        return None, None, []
 
     prov = ProviderFactory.get(prov_name, API_KEYS)
     if not prov or not await prov.health_check():
-        return None, None
+        return None, None, []
 
     log.info(f"🤖 Tool calling: {prov_name}/{model}")
     resp = await prov.chat(messages, model, tools=TOOLS_LIST, tool_choice="auto")
 
     if not resp.success:
-        return None, None
+        return None, None, []
 
     tool_calls = getattr(resp, "tool_calls", None)
     if not tool_calls:
-        return resp, None
+        return resp, None, []
 
     # ── Multi-round tool calling loop ──
     max_rounds = 3
     current_messages = list(messages)
     tools_used = []
+    music_actions = []  # Collect music actions for main.py
 
     for round_num in range(max_rounds):
         current_messages.append({
@@ -428,6 +454,14 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
+            # Capture music actions BEFORE executing
+            if fn_name == "play_music":
+                music_actions.append({
+                    "type": "music",
+                    "action": fn_args.get("action", "play"),
+                    "query": fn_args.get("query", ""),
+                })
+
             tool_result = await execute_tool_call(fn_name, fn_args)
             log.info(f"✅ Round {round_num + 1}: {fn_name}")
             tools_used.append(fn_name)
@@ -438,27 +472,25 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 "content": tool_result
             })
 
-        # Kirim balik ke AI tanpa tools agar langsung jawab
         resp = await prov.chat(current_messages, model)
 
         if not resp.success:
-            return None, None
+            return None, None, music_actions
 
         tool_calls = getattr(resp, "tool_calls", None)
         if not tool_calls:
             _log_request(guild_id, prov_name, model, True, resp.latency)
-            # Build note dengan emoji sesuai tool yang dipakai
             tool_icons = {
                 "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
-                "calculate": "🔢", "translate": "🌐"
+                "calculate": "🔢", "translate": "🌐", "play_music": "🎵"
             }
-            unique_tools = list(dict.fromkeys(tools_used))  # maintain order, remove dupes
+            unique_tools = list(dict.fromkeys(tools_used))
             icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
             note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
-            return resp, note
+            return resp, note, music_actions
 
     _log_request(guild_id, prov_name, model, True, resp.latency)
-    return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}"
+    return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", music_actions
 
 
 # ============================================================
@@ -493,12 +525,16 @@ SYSTEM_PROMPTS = {
     "normal": """You are a helpful AI assistant in a Discord server.
 You can see who is talking by their name in [brackets].
 Multiple users may be chatting — address them by name when appropriate.
-Remember full conversation context. Respond in user's language. Be concise and frequired
+Remember full conversation context. Respond in user's language. Be concise and friendly.
 
 When you receive tool results (such as web search, weather, time, or translation results), 
-use that information naturally in your answer.TOOLNOT list sources, URLs, or citations. Do NOT use numbered references like [1][2][3].
+use that information naturally in your answer.
+Do NOT list sources, URLs, or citations. Do NOT use numbered references like [1][2][3].
 Just answer naturally as if you already knew the information.
-Never say "I cannot access real-time data" when tool results are provided.""",
+Never say "I cannot access real-time data" when tool results are provided.
+
+For music: you can play, skip, pause, resume, and stop music.
+If the user asks you to play music but is NOT in a voice channel, tell them to join one first.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
 Multiple users may ask questions — keep track of who asked what.
@@ -524,7 +560,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     mode = settings.get("active_mode", "normal")
     guild_id = settings.get("guild_id", 0)
     
-    # Get conversation history from DATABASE
     history = get_conversation(guild_id, channel_id, limit=30)
     
     # =========================================================
@@ -554,7 +589,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
         
-        return {"text": text, "fallback_note": fb_note if resp.success else None}
+        return {"text": text, "fallback_note": fb_note if resp.success else None, "actions": []}
     
     # =========================================================
     # STEP 2: Auto-detect mode
@@ -566,7 +601,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             mode = detected
     
     # =========================================================
-    # STEP 2B: Coba Auto Tool Calling (AI putuskan sendiri)
+    # STEP 2B: Auto Tool Calling (AI decides — includes music!)
     # =========================================================
     
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
@@ -582,18 +617,25 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             else:
                 formatted_history.append({"role": msg["role"], "content": msg["content"]})
         
+        # Add voice channel context so AI knows if user can play music
+        voice_ctx = ""
+        if settings.get("user_in_voice"):
+            voice_ctx = f" [in voice channel: {settings.get('user_voice_channel', 'yes')}]"
+        else:
+            voice_ctx = " [not in voice channel]"
+        
         tool_msgs = [
             {"role": "system", "content": system_prompt},
             *formatted_history,
-            {"role": "user", "content": f"[{user_name}]: {content}"}
+            {"role": "user", "content": f"[{user_name}]{voice_ctx}: {content}"}
         ]
         
-        tool_resp, tool_note = await handle_with_tools(tool_msgs, prov, mid, guild_id)
+        tool_resp, tool_note, tool_actions = await handle_with_tools(tool_msgs, prov, mid, guild_id)
         if tool_resp and tool_resp.success:
             text = strip_think_tags(tool_resp.content) or "Tidak ada jawaban."
             save_message(guild_id, channel_id, user_id, user_name, "user", content)
             save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
-            return {"text": text, "fallback_note": tool_note}
+            return {"text": text, "fallback_note": tool_note, "actions": tool_actions}
     
     # =========================================================
     # STEP 3: Regular AI chat with DB memory (Fallback)
@@ -630,5 +672,5 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         text = strip_think_tags(resp.content) or "Tidak ada jawaban."
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
-        return {"text": text, "fallback_note": fb_note}
-    return {"text": resp.content, "fallback_note": None}
+        return {"text": text, "fallback_note": fb_note, "actions": []}
+    return {"text": resp.content, "fallback_note": None, "actions": []}
