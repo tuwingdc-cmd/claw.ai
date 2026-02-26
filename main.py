@@ -101,42 +101,158 @@ MONTH_ALIASES = {
 }
 
 def parse_month(value: str) -> int:
-    """Parse month from string (number or name)"""
     if value is None:
         return None
     value = value.lower().strip()
-    # Try as number first
     try:
         m = int(value)
         if 1 <= m <= 12:
             return m
     except ValueError:
         pass
-    # Try as name
     return MONTH_ALIASES.get(value)
 
 # ============================================================
-# SETTINGS HELPER (wraps SettingsManager)
+# SETTINGS HELPER
 # ============================================================
 
 def get_settings(guild_id: int) -> dict:
-    """Get guild settings from DB cache"""
     return SettingsManager.get(guild_id)
 
 def save_settings(guild_id: int):
-    """Save current settings to DB"""
     SettingsManager.save(guild_id)
 
 def get_active_profile(guild_id: int) -> dict:
-    """Get current active mode profile"""
     s = get_settings(guild_id)
     mode = s["active_mode"]
     return s["profiles"][mode]
 
 # ============================================================
-# EVENTS
+# MUSIC ACTION HANDLER — Execute AI music commands
 # ============================================================
 
+async def execute_music_action(message: discord.Message, action: dict):
+    """Execute music action triggered by AI tool calling"""
+    from music.player import MusicPlayer, get_player, set_player, remove_player
+    from music.views import create_now_playing_embed, MusicControlView
+    
+    act = action.get("action", "play")
+    query = action.get("query", "")
+    
+    log.info(f"🎵 Executing music action: {act} | query: {query}")
+    
+    # ── PLAY ──
+    if act == "play":
+        if not message.author.voice:
+            # AI should have already told user, but just in case
+            return
+        
+        player: wavelink.Player = message.guild.voice_client
+        
+        if not player:
+            try:
+                player = await message.author.voice.channel.connect(cls=wavelink.Player)
+                music_player = MusicPlayer(player)
+                set_player(message.guild.id, music_player)
+                log.info(f"🎵 Joined voice: {message.author.voice.channel.name}")
+            except Exception as e:
+                log.error(f"🎵 Failed to join voice: {e}")
+                await message.channel.send(f"❌ Gagal join voice channel: {e}")
+                return
+        else:
+            music_player = get_player(message.guild.id)
+            if not music_player:
+                music_player = MusicPlayer(player)
+                set_player(message.guild.id, music_player)
+        
+        try:
+            tracks = await wavelink.Playable.search(query)
+            
+            if not tracks:
+                await message.channel.send(f"❌ Tidak menemukan: **{query}**")
+                return
+            
+            if isinstance(tracks, wavelink.Playlist):
+                for t in tracks.tracks:
+                    t.requester = message.author
+                await music_player.add_tracks(tracks.tracks)
+                
+                if not player.playing:
+                    await music_player.play_next()
+                
+                embed = discord.Embed(
+                    title="📋 Playlist Added",
+                    description=f"**{tracks.name}**\n{len(tracks.tracks)} tracks added",
+                    color=0x1DB954
+                )
+                if tracks.artwork:
+                    embed.set_thumbnail(url=tracks.artwork)
+                await message.channel.send(embed=embed)
+            else:
+                track = tracks[0]
+                track.requester = message.author
+                
+                if player.playing:
+                    await music_player.add_track(track)
+                    embed = discord.Embed(
+                        title="➕ Added to Queue",
+                        description=f"**[{track.title}]({track.uri})**\n{track.author}",
+                        color=0x1DB954
+                    )
+                    if track.artwork:
+                        embed.set_thumbnail(url=track.artwork)
+                    embed.add_field(name="Duration", value=MusicPlayer._format_time(track.length), inline=True)
+                    embed.add_field(name="Position", value=f"#{len(music_player.queue)}", inline=True)
+                    await message.channel.send(embed=embed)
+                else:
+                    await player.play(track)
+                    embed = create_now_playing_embed(track, player)
+                    view = MusicControlView(player)
+                    np_msg = await message.channel.send(embed=embed, view=view)
+                    music_player.now_playing_message = np_msg
+                    
+        except Exception as e:
+            log.error(f"🎵 Play error: {e}")
+            await message.channel.send(f"❌ Error playing: {e}")
+    
+    # ── SKIP ──
+    elif act == "skip":
+        music_player = get_player(message.guild.id)
+        if music_player and music_player.is_playing:
+            current = music_player.current
+            await music_player.skip()
+            log.info(f"🎵 Skipped: {current.title if current else 'unknown'}")
+        else:
+            log.warning("🎵 Skip requested but nothing playing")
+    
+    # ── STOP ──
+    elif act == "stop":
+        player: wavelink.Player = message.guild.voice_client
+        if player:
+            music_player = get_player(message.guild.id)
+            if music_player:
+                await music_player.clear_queue()
+            await player.disconnect()
+            remove_player(message.guild.id)
+            log.info("🎵 Stopped and disconnected")
+    
+    # ── PAUSE ──
+    elif act == "pause":
+        player: wavelink.Player = message.guild.voice_client
+        if player and player.playing:
+            await player.pause(True)
+            log.info("🎵 Paused")
+    
+    # ── RESUME ──
+    elif act == "resume":
+        player: wavelink.Player = message.guild.voice_client
+        if player and player.paused:
+            await player.pause(False)
+            log.info("🎵 Resumed")
+
+# ============================================================
+# EVENTS
+# ============================================================
 
 # ============================================================
 # WAVELINK EVENTS (Music System)
@@ -144,7 +260,6 @@ def get_active_profile(guild_id: int) -> dict:
 
 @bot.event
 async def setup_hook():
-    """Initialize wavelink before bot ready"""
     from config import LAVALINK_NODES
     try:
         for node_config in LAVALINK_NODES:
@@ -190,7 +305,6 @@ async def on_ready():
     log.info(f"Servers: {len(bot.guilds)}")
     log.info(f"Providers: {list_available_providers()}")
     
-    # === DATABASE STATUS ===
     import os
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.db")
     if os.path.exists(db_path):
@@ -200,7 +314,6 @@ async def on_ready():
     else:
         log.warning(f"DATABASE: NOT FOUND | {db_path}")
     
-    # Load settings for all connected guilds
     for guild in bot.guilds:
         settings = get_settings(guild.id)
         mode = settings["active_mode"]
@@ -211,7 +324,6 @@ async def on_ready():
     log.info("=" * 50)
     log.info("BOT FULLY READY - ALL SYSTEMS GO")
     
-    # Load music commands
     try:
         from music.commands import setup as setup_music
         await setup_music(bot)
@@ -246,7 +358,6 @@ async def on_message(message: discord.Message):
 
     settings = get_settings(message.guild.id)
 
-    # Determine if bot should respond
     should_respond = False
 
     if settings["auto_chat"]:
@@ -259,10 +370,17 @@ async def on_message(message: discord.Message):
     if not should_respond:
         return
 
-    # Clean content
     content = message.content.replace(f"<@{bot.user.id}>", "").strip()
     if not content:
         content = "Hello!"
+
+    # ── Pass voice channel context to handler ──
+    if message.author.voice and message.author.voice.channel:
+        settings["user_in_voice"] = True
+        settings["user_voice_channel"] = message.author.voice.channel.name
+    else:
+        settings["user_in_voice"] = False
+        settings["user_voice_channel"] = None
 
     async with message.channel.typing():
         from core.handler import handle_message
@@ -275,12 +393,21 @@ async def on_message(message: discord.Message):
     if fallback_note:
         response_text += f"\n\n-# {fallback_note}"
 
+    # ── Send AI response ──
     if len(response_text) > 2000:
         chunks = _split_message(response_text)
         for chunk in chunks:
             await message.reply(chunk, mention_author=False)
     else:
         await message.reply(response_text, mention_author=False)
+
+    # ── Execute music actions (if any) ──
+    for action in result.get("actions", []):
+        if action.get("type") == "music":
+            try:
+                await execute_music_action(message, action)
+            except Exception as e:
+                log.error(f"🎵 Music action error: {e}")
 
 # ============================================================
 # HELPERS
@@ -305,12 +432,10 @@ def _split_message(text: str, limit: int = 2000) -> list:
 # COMMANDS
 # ============================================================
 
-
 @bot.event
 async def on_command_error(ctx, error):
-    """Suppress CommandNotFound errors silently"""
     if isinstance(error, commands.CommandNotFound):
-        return  # Ignore unknown commands silently
+        return
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"❌ Missing argument: `{error.param.name}`")
     elif isinstance(error, commands.CommandInvokeError):
@@ -321,7 +446,6 @@ async def on_command_error(ctx, error):
 
 @bot.command(name="help")
 async def help_cmd(ctx: commands.Context):
-    """Show commands"""
     p = DISCORD_PREFIX
     embed = discord.Embed(
         title="🤖 AI Bot Commands",
@@ -342,23 +466,37 @@ async def help_cmd(ctx: commands.Context):
             f"`{p}calendar [bulan] [tahun]` — Tampilkan kalender\n"
             f"`{p}countdown <YYYY-MM-DD>` — Hitung mundur\n"
             f"`{p}weather <kota>` — Cek cuaca\n\n"
+            f"**Music:**\n"
+            f"`{p}play <lagu>` — Play music\n"
+            f"`{p}skip` — Skip track\n"
+            f"`{p}queue` — Lihat antrian\n"
+            f"`{p}np` — Now playing\n"
+            f"`{p}pause` / `{p}resume` — Pause/Resume\n"
+            f"`{p}stop` — Stop & disconnect\n"
+            f"`{p}volume <0-100>` — Set volume\n"
+            f"`{p}loop` / `{p}shuffle` — Toggle loop/shuffle\n"
+            f"`{p}lyrics [judul]` — Lihat lyrics\n"
+            f"`{p}fav` — Favorite commands\n\n"
+            f"**💡 Atau mention {ctx.bot.user.mention}:**\n"
+            f"• Chat / tanya apapun\n"
+            f"• *\"puterin lagu Bohemian Rhapsody\"*\n"
+            f"• *\"skip lagunya\"* / *\"stop musik\"*\n"
+            f"• *\"translate ke English: aku lagi gabut\"*\n"
+            f"• *\"cuaca Jakarta gimana?\"*\n\n"
             f"**Memory:**\n"
             f"`{p}memory` — Lihat status memory\n"
             f"`{p}clear` — Hapus memory channel\n"
-            f"`{p}clear all` — Hapus semua memory server\n\n"
-            f"**Chat:**\n"
-            f"Mention {ctx.bot.user.mention} untuk chat dengan AI"
+            f"`{p}clear all` — Hapus semua memory server"
         )
     )
     await ctx.send(embed=embed)
 
 # ============================================================
-# !SET — ALL-IN-ONE SETTINGS (auto-save to DB)
+# !SET — ALL-IN-ONE SETTINGS
 # ============================================================
 
 @bot.command(name="set")
 async def set_cmd(ctx: commands.Context):
-    """All-in-one settings panel"""
     settings = get_settings(ctx.guild.id)
 
     from ui.embeds import create_settings_panel, SettingsView
@@ -366,7 +504,6 @@ async def set_cmd(ctx: commands.Context):
     embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
 
     async def on_update(interaction: discord.Interaction, key: str, value):
-        """Callback when setting changes — auto-saves to DB!"""
         nonlocal settings
 
         if key == "save_profile":
@@ -379,27 +516,27 @@ async def set_cmd(ctx: commands.Context):
             icon_p = PROVIDER_ICONS.get(value["provider"], "📦")
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             embed.set_footer(text=f"✅ {MODE_ICONS[mode]} {mode.title()} → {icon_p} {value['provider']}/{value['model']} (saved!)")
-            save_settings(ctx.guild.id)  # 💾 SAVE!
+            save_settings(ctx.guild.id)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "auto_chat":
             settings["auto_chat"] = value
-            save_settings(ctx.guild.id)  # 💾 SAVE!
+            save_settings(ctx.guild.id)
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "auto_detect":
             settings["auto_detect"] = value
-            save_settings(ctx.guild.id)  # 💾 SAVE!
+            save_settings(ctx.guild.id)
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "active_mode":
             settings["active_mode"] = value
-            save_settings(ctx.guild.id)  # 💾 SAVE!
+            save_settings(ctx.guild.id)
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             view = SettingsView(settings, on_update, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             await interaction.response.edit_message(embed=embed, view=view)
@@ -411,7 +548,7 @@ async def set_cmd(ctx: commands.Context):
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif key == "reset":
-            SettingsManager.reset(ctx.guild.id)  # 💾 RESET + SAVE!
+            SettingsManager.reset(ctx.guild.id)
             settings = get_settings(ctx.guild.id)
             embed = create_settings_panel(settings, PROVIDER_ICONS, SEARCH_ICONS, MODE_ICONS)
             embed.set_footer(text="🔄 Reset ke default (saved!)")
@@ -427,14 +564,14 @@ async def set_cmd(ctx: commands.Context):
     await ctx.send(embed=embed, view=view)
 
 # ============================================================
-# SIMPLE COMMANDS (all auto-save!)
+# SIMPLE COMMANDS
 # ============================================================
 
 @bot.command(name="toggle")
 async def toggle_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
     settings["auto_chat"] = not settings["auto_chat"]
-    save_settings(ctx.guild.id)  # 💾
+    save_settings(ctx.guild.id)
     state = "🟢 ON" if settings["auto_chat"] else "🔴 OFF"
     await ctx.send(f"Auto-chat: {state} (saved! ✅)")
 
@@ -444,11 +581,11 @@ async def channel_cmd(ctx: commands.Context):
     ch = ctx.channel.id
     if ch in settings["enabled_channels"]:
         settings["enabled_channels"].remove(ch)
-        save_settings(ctx.guild.id)  # 💾
+        save_settings(ctx.guild.id)
         await ctx.send(f"🔴 {ctx.channel.mention} dihapus dari auto-chat (saved! ✅)")
     else:
         settings["enabled_channels"].append(ch)
-        save_settings(ctx.guild.id)  # 💾
+        save_settings(ctx.guild.id)
         await ctx.send(f"🟢 {ctx.channel.mention} ditambahkan ke auto-chat (saved! ✅)")
 
 @bot.command(name="status")
@@ -516,16 +653,15 @@ async def log_cmd(ctx: commands.Context, n: int = 10):
 
 @bot.command(name="reset")
 async def reset_cmd(ctx: commands.Context):
-    SettingsManager.reset(ctx.guild.id)  # 💾 Reset + Save
+    SettingsManager.reset(ctx.guild.id)
     await ctx.send("🔄 Reset ke default berhasil. (saved! ✅)")
 
 # ============================================================
-# MEMORY COMMANDS (FIXED - now before bot.run!)
+# MEMORY COMMANDS
 # ============================================================
 
 @bot.command(name="clear", aliases=["forget", "lupa"])
 async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
-    """Clear conversation memory"""
     from core.database import clear_conversation
     
     if scope == "all":
@@ -537,7 +673,6 @@ async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
 
 @bot.command(name="memory", aliases=["mem"])
 async def memory_cmd(ctx: commands.Context):
-    """Lihat status memory"""
     from core.database import get_memory_stats, get_conversation, MAX_MEMORY_MESSAGES
     
     stats = get_memory_stats(ctx.guild.id)
@@ -563,7 +698,6 @@ from skills import (
 
 @bot.command(name="time", aliases=["waktu"])
 async def time_cmd(ctx: commands.Context, timezone: str = "Asia/Jakarta"):
-    """Cek waktu sekarang"""
     result = get_current_time(timezone)
     if result["success"]:
         embed = discord.Embed(
@@ -580,8 +714,6 @@ async def time_cmd(ctx: commands.Context, timezone: str = "Asia/Jakarta"):
 
 @bot.command(name="alarm")
 async def alarm_cmd(ctx: commands.Context, minutes: int, *, message: str = "⏰ Alarm!"):
-    """Set alarm: !alarm 5 Waktunya meeting"""
-    
     if minutes < 1 or minutes > 1440:
         await ctx.send("❌ Alarm hanya bisa 1-1440 menit (1 menit - 24 jam)")
         return
@@ -594,13 +726,7 @@ async def alarm_cmd(ctx: commands.Context, minutes: int, *, message: str = "⏰ 
             except:
                 pass
     
-    result = await set_alarm(
-        ctx.guild.id, 
-        ctx.author.id, 
-        minutes, 
-        message, 
-        alarm_callback
-    )
+    result = await set_alarm(ctx.guild.id, ctx.author.id, minutes, message, alarm_callback)
     
     if result["success"]:
         await ctx.send(
@@ -610,7 +736,6 @@ async def alarm_cmd(ctx: commands.Context, minutes: int, *, message: str = "⏰ 
 
 @bot.command(name="alarms", aliases=["myalarms"])
 async def alarms_cmd(ctx: commands.Context):
-    """Lihat alarm aktif kamu"""
     active = list_alarms(ctx.guild.id, ctx.author.id)
     if not active:
         await ctx.send("📭 Kamu tidak punya alarm aktif.")
@@ -626,9 +751,6 @@ async def alarms_cmd(ctx: commands.Context):
 
 @bot.command(name="calendar", aliases=["kalender", "cal"])
 async def calendar_cmd(ctx: commands.Context, month_input: str = None, year: int = None):
-    """Tampilkan kalender: !calendar atau !calendar februari atau !calendar 12 2026"""
-    
-    # Parse month (support both number and name!)
     month = None
     if month_input:
         month = parse_month(month_input)
@@ -651,7 +773,6 @@ async def calendar_cmd(ctx: commands.Context, month_input: str = None, year: int
 
 @bot.command(name="countdown", aliases=["hitung"])
 async def countdown_cmd(ctx: commands.Context, target_date: str):
-    """Hitung mundur ke tanggal: !countdown 2026-12-31"""
     result = days_until(target_date)
     if result["success"]:
         if result["is_today"]:
@@ -660,14 +781,12 @@ async def countdown_cmd(ctx: commands.Context, target_date: str):
             msg = f"📅 {target_date} sudah lewat **{abs(result['days_remaining'])} hari** yang lalu"
         else:
             msg = f"⏳ Tinggal **{result['days_remaining']} hari** lagi menuju {target_date}"
-        
         await ctx.send(msg)
     else:
         await ctx.send(f"❌ {result['error']}")
 
 @bot.command(name="weather", aliases=["cuaca"])
 async def weather_cmd(ctx: commands.Context, *, city: str = "Jakarta"):
-    """Cek cuaca: !weather Tokyo"""
     async with ctx.typing():
         result = await get_weather(city)
     
