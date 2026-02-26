@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import asyncio
+import aiohttp
 from typing import Dict, List, Optional
 from datetime import datetime
 from core.providers import ProviderFactory, AIResponse
@@ -38,21 +39,67 @@ def strip_think_tags(content: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', content).strip()
 
 # ============================================================
-# SEARCH
+# SEARCH — Tavily first, DuckDuckGo fallback
 # ============================================================
 
-async def do_search(query: str, engine: str = "duckduckgo") -> str:
+async def do_search(query: str, engine: str = "auto") -> str:
+    """Search with Tavily first (more accurate), fallback to DuckDuckGo"""
+
+    # ── TAVILY (lebih akurat untuk data terkini) ──
+    tavily_key = API_KEYS.get("tavily")
+    if tavily_key:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.tavily.com/search",
+                    json={
+                        "api_key": tavily_key,
+                        "query": query,
+                        "max_results": 5,
+                        "search_depth": "basic",
+                        "include_answer": True,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        parts = []
+
+                        # Tavily punya "answer" langsung
+                        if data.get("answer"):
+                            parts.append(f"Summary: {data['answer']}")
+
+                        for i, r in enumerate(data.get("results", []), 1):
+                            parts.append(
+                                f"{i}. {r.get('title', 'No title')}\n"
+                                f"   {r.get('content', '')[:200]}\n"
+                                f"   {r.get('url', '')}"
+                            )
+
+                        if parts:
+                            log.info(f"🔍 Tavily search OK: {query}")
+                            return "\n\n".join(parts)
+                    else:
+                        log.warning(f"Tavily HTTP {resp.status}, fallback to DuckDuckGo")
+        except Exception as e:
+            log.warning(f"Tavily error, fallback to DuckDuckGo: {e}")
+
+    # ── DUCKDUCKGO (fallback, gratis unlimited) ──
     try:
-        if engine == "duckduckgo":
-            from duckduckgo_search import DDGS
-            def _s():
-                with DDGS() as d: return list(d.text(query, max_results=5))
-            results = await asyncio.get_event_loop().run_in_executor(None, _s)
-            if not results: return "Tidak ada hasil."
-            return "\n\n".join([f"{i}. {r['title']}\n   {r['body'][:150]}\n   {r['href']}" for i, r in enumerate(results, 1)])
+        from duckduckgo_search import DDGS
+        def _s():
+            with DDGS() as d:
+                return list(d.text(query, max_results=5))
+        results = await asyncio.get_event_loop().run_in_executor(None, _s)
+        if not results:
+            return "Tidak ada hasil."
+        log.info(f"🔍 DuckDuckGo search OK: {query}")
+        return "\n\n".join([
+            f"{i}. {r['title']}\n   {r['body'][:150]}\n   {r['href']}"
+            for i, r in enumerate(results, 1)
+        ])
     except Exception as e:
         return f"Search error: {e}"
-    return "Search tidak tersedia."
 
 GROUNDING_MODELS = {("groq", "groq/compound"), ("groq", "groq/compound-mini"), ("groq", "compound-beta"), ("groq", "compound-beta-mini"), ("pollinations", "gemini-search"), ("pollinations", "perplexity-fast"), ("pollinations", "perplexity-reasoning")}
 def is_grounding_model(p, m): return (p, m) in GROUNDING_MODELS
@@ -119,11 +166,8 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
 
 
 # ============================================================
-# TOOL CALLING HANDLER — FIXED
+# TOOL CALLING HANDLER
 # ============================================================
-# FIX #1: Multi-tool + multi-round loop
-# FIX #2: content "" bukan None
-# FIX #5: Round 2+ tetap kirim tools parameter
 
 async def handle_with_tools(messages: list, prov_name: str, model: str,
                              guild_id: int = 0) -> tuple:
@@ -156,20 +200,19 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
         return resp, None
 
     # ── Multi-round tool calling loop ──
-    max_rounds = 5
-    current_messages = list(messages)  # copy agar tidak mutate original
+    max_rounds = 3  # Turun dari 5 ke 3 agar tidak loop terlalu lama
+    current_messages = list(messages)
     search_performed = False
 
     for round_num in range(max_rounds):
         # Tambah assistant message dengan tool_calls
-        # FIX #2: content = "" bukan None (Groq/OpenRouter reject None)
         current_messages.append({
             "role": "assistant",
             "content": resp.content or "",
             "tool_calls": tool_calls
         })
 
-        # FIX #1: Eksekusi SEMUA tool calls, bukan cuma [0]
+        # Eksekusi SEMUA tool calls
         for tc in tool_calls:
             fn_name = tc.get("function", {}).get("name", "")
             fn_args_str = tc.get("function", {}).get("arguments", "{}")
@@ -190,8 +233,8 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 "content": tool_result
             })
 
-        # FIX #5: Round 2+ tetap kirim tools agar provider tidak reject
-        resp = await prov.chat(current_messages, model, tools=TOOLS_LIST)
+        # Kirim balik ke AI — TANPA tools agar AI langsung jawab, tidak loop lagi
+        resp = await prov.chat(current_messages, model)
 
         if not resp.success:
             return None, None
@@ -241,7 +284,13 @@ SYSTEM_PROMPTS = {
     "normal": """You are a helpful AI assistant in a Discord server.
 You can see who is talking by their name in [brackets].
 Multiple users may be chatting — address them by name when appropriate.
-Remember full conversation context. Respond in user's language. Be concise and friendly.""",
+Remember full conversation context. Respond in user's language. Be concise and friendly.
+
+IMPORTANT: When you receive tool results (such as web search results), 
+you MUST use that information to answer the user's question directly.
+Do NOT say "I cannot access real-time data" or "I don't have access to the internet" 
+when search results have already been provided to you.
+The search results ARE your real-time data — summarize and present them confidently.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
 Multiple users may ask questions — keep track of who asked what.
@@ -249,11 +298,17 @@ Do not use <think> tags. Explain naturally. Respond in user's language.""",
 
     "search": """You are an AI with web search results.
 Answer based on search results AND conversation context.
-Cite URLs when relevant. Respond in user's language.""",
+Cite URLs when relevant. Respond in user's language.
+
+IMPORTANT: The search results below are REAL and CURRENT.
+Use them to answer confidently. Never say you cannot access the internet.""",
 
     "with_skill": """You are a helpful AI assistant. Tool results are provided below.
 Present the information naturally. Track who asked what.
-Respond in the same language as the user.""",
+Respond in the same language as the user.
+
+IMPORTANT: The tool results provided are REAL and CURRENT data.
+Use them confidently to answer the user's question.""",
 }
 
 # ============================================================
