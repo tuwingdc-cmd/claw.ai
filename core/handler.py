@@ -1,7 +1,8 @@
 """
-Message Handler + DB-backed Conversation Memory + Smart Skills
+Message Handler + DB-backed Conversation Memory + Smart Skills + Tools
 """
 import json
+import math
 import logging
 import re
 import asyncio
@@ -65,7 +66,6 @@ async def do_search(query: str, engine: str = "auto") -> str:
                         data = await resp.json()
                         parts = []
 
-                        # Tavily punya "answer" langsung
                         if data.get("answer"):
                             parts.append(f"Summary: {data['answer']}")
 
@@ -105,8 +105,65 @@ GROUNDING_MODELS = {("groq", "groq/compound"), ("groq", "groq/compound-mini"), (
 def is_grounding_model(p, m): return (p, m) in GROUNDING_MODELS
 
 # ============================================================
-# TOOL DEFINITIONS (untuk Auto Tool Calling)
+# TRANSLATE — AI-powered natural translation
 # ============================================================
+
+async def do_translate(text: str, target_lang: str, style: str = "natural") -> str:
+    """
+    Translate using AI for natural, native-sounding results.
+    Understands slang, idioms, and context.
+    """
+    style_prompts = {
+        "natural": (
+            "You are a native bilingual translator. Translate naturally as a native speaker would say it. "
+            "Understand slang, idioms, colloquialisms, and cultural context. "
+            "Do NOT translate literally word-by-word. Make it sound like something a real person would say. "
+            "Only output the translation, nothing else."
+        ),
+        "formal": (
+            "You are a professional translator. Translate in formal, polished language. "
+            "Only output the translation, nothing else."
+        ),
+        "casual": (
+            "You are a young native speaker. Translate super casually with modern slang and abbreviations. "
+            "Make it sound like texting a friend. Only output the translation, nothing else."
+        ),
+    }
+
+    system_prompt = style_prompts.get(style, style_prompts["natural"])
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Translate to {target_lang}:\n\n{text}"}
+    ]
+
+    # Pakai model cepat dan ringan untuk translate
+    translate_chains = [
+        ("groq", "llama-3.1-8b-instant"),
+        ("groq", "llama-3.3-70b-versatile"),
+        ("cerebras", "llama3.1-8b"),
+        ("sambanova", "Meta-Llama-3.1-8B-Instruct"),
+        ("pollinations", "openai-fast"),
+    ]
+
+    for prov_name, model_id in translate_chains:
+        prov = ProviderFactory.get(prov_name, API_KEYS)
+        if not prov or not await prov.health_check():
+            continue
+        try:
+            resp = await prov.chat(messages, model_id, temperature=0.3, max_tokens=2048)
+            if resp.success and resp.content.strip():
+                log.info(f"🌐 Translated via {prov_name}/{model_id}")
+                return resp.content.strip()
+        except Exception as e:
+            log.warning(f"Translate error {prov_name}: {e}")
+            continue
+
+    return f"[Translation failed] {text}"
+
+# ============================================================
+# TOOL DEFINITIONS (5 Tools)
+# ============================================================
+
 WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -114,24 +171,116 @@ WEB_SEARCH_TOOL = {
         "description": (
             "Search the internet for real-time information. "
             "Use this when asked about: current events, news, prices, "
-            "who is president/leader/CEO, sports results, weather, "
+            "who is president/leader/CEO, sports results, "
             "anything that might have changed recently, or any fact "
             "you are not confident about."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query in the most relevant language"
-                }
+                "query": {"type": "string", "description": "Search query in the most relevant language"}
             },
             "required": ["query"]
         }
     }
 }
 
-TOOLS_LIST = [WEB_SEARCH_TOOL]
+GET_TIME_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_time",
+        "description": (
+            "Get current date and time in a specific timezone. "
+            "Use for questions about: what time is it, today's date, "
+            "what day is it, current time in a city/country."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "description": "Timezone like Asia/Jakarta, America/New_York, Europe/London, Asia/Tokyo. Default: Asia/Jakarta"
+                }
+            },
+            "required": []
+        }
+    }
+}
+
+GET_WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": (
+            "Get current weather for a city. "
+            "Use when asked about weather, temperature, rain, humidity in a location."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "City name, e.g. Jakarta, Tokyo, London, New York"
+                }
+            },
+            "required": ["city"]
+        }
+    }
+}
+
+CALCULATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "calculate",
+        "description": (
+            "Perform mathematical calculations. "
+            "Use for math questions, unit conversions, percentages, etc."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "Math expression like '5 + 3 * 2', 'sqrt(144)', '15% of 200', '2**10'"
+                }
+            },
+            "required": ["expression"]
+        }
+    }
+}
+
+TRANSLATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "translate",
+        "description": (
+            "Translate text between languages naturally like a native speaker. "
+            "Understands slang, idioms, and cultural context. "
+            "Use when user asks to translate something, or wants to know how to say something in another language."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to translate"
+                },
+                "target_language": {
+                    "type": "string",
+                    "description": "Target language, e.g. English, Indonesian, Japanese, Korean, Spanish"
+                },
+                "style": {
+                    "type": "string",
+                    "enum": ["natural", "formal", "casual"],
+                    "description": "Translation style. natural=everyday speech, formal=polished, casual=slang/texting. Default: natural"
+                }
+            },
+            "required": ["text", "target_language"]
+        }
+    }
+}
+
+TOOLS_LIST = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL, TRANSLATE_TOOL]
 
 
 # ============================================================
@@ -153,15 +302,77 @@ class ModeDetector:
 
 
 # ============================================================
-# TOOL CALL EXECUTOR
+# TOOL CALL EXECUTOR — 5 Tools
 # ============================================================
 
 async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
     """Eksekusi tool yang diminta AI"""
+
+    # ── WEB SEARCH ──
     if tool_name == "web_search":
         query = tool_args.get("query", "")
-        log.info(f"🔍 AI requested search: {query}")
+        log.info(f"🔍 Tool: web_search({query})")
         return await do_search(query)
+
+    # ── GET TIME ──
+    elif tool_name == "get_time":
+        from skills.time_skill import get_current_time
+        tz = tool_args.get("timezone", "Asia/Jakarta")
+        log.info(f"🕐 Tool: get_time({tz})")
+        result = get_current_time(tz)
+        if result["success"]:
+            return f"Current time in {tz}: {result['full']}"
+        return f"Error: {result.get('error', 'Unknown timezone')}"
+
+    # ── GET WEATHER ──
+    elif tool_name == "get_weather":
+        from skills.weather_skill import get_weather
+        city = tool_args.get("city", "Jakarta")
+        log.info(f"🌤️ Tool: get_weather({city})")
+        result = await get_weather(city)
+        if result["success"]:
+            return (
+                f"Weather in {result['city']}: {result['description']}, "
+                f"Temperature: {result['temp']}°C (feels like {result['feels_like']}°C), "
+                f"Humidity: {result['humidity']}%, "
+                f"Wind: {result['wind_speed']} km/h"
+            )
+        return f"Error: {result.get('error', 'City not found')}"
+
+    # ── CALCULATE ──
+    elif tool_name == "calculate":
+        expression = tool_args.get("expression", "")
+        log.info(f"🔢 Tool: calculate({expression})")
+        try:
+            # Preprocess common patterns
+            expr = expression.replace("^", "**").replace("×", "*").replace("÷", "/")
+            # Handle "X% of Y"
+            pct_match = re.match(r'([\d.]+)%\s*of\s*([\d.]+)', expr, re.IGNORECASE)
+            if pct_match:
+                pct, val = float(pct_match.group(1)), float(pct_match.group(2))
+                result = pct / 100 * val
+                return f"{expression} = {result}"
+            # Safe eval
+            allowed = {
+                "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
+                "tan": math.tan, "log": math.log, "log10": math.log10,
+                "log2": math.log2, "ceil": math.ceil, "floor": math.floor,
+                "abs": abs, "round": round, "pow": pow, "max": max, "min": min,
+                "pi": math.pi, "e": math.e,
+            }
+            result = eval(expr, {"__builtins__": {}}, allowed)
+            return f"{expression} = {result}"
+        except Exception as e:
+            return f"Calculation error: {e}"
+
+    # ── TRANSLATE ──
+    elif tool_name == "translate":
+        text = tool_args.get("text", "")
+        target = tool_args.get("target_language", "English")
+        style = tool_args.get("style", "natural")
+        log.info(f"🌐 Tool: translate(→{target}, style={style})")
+        return await do_translate(text, target, style)
+
     return f"Unknown tool: {tool_name}"
 
 
@@ -178,7 +389,6 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     """
     from core.providers import supports_tool_calling
 
-    # Cek apakah provider support tools
     if not supports_tool_calling(prov_name):
         return None, None
 
@@ -186,33 +396,28 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     if not prov or not await prov.health_check():
         return None, None
 
-    # ── Round 1: Kirim ke AI dengan tools ──
     log.info(f"🤖 Tool calling: {prov_name}/{model}")
     resp = await prov.chat(messages, model, tools=TOOLS_LIST, tool_choice="auto")
 
     if not resp.success:
         return None, None
 
-    # Cek apakah AI minta tool call
     tool_calls = getattr(resp, "tool_calls", None)
     if not tool_calls:
-        # AI tidak perlu tool → langsung return jawaban
         return resp, None
 
     # ── Multi-round tool calling loop ──
-    max_rounds = 3  # Turun dari 5 ke 3 agar tidak loop terlalu lama
+    max_rounds = 3
     current_messages = list(messages)
-    search_performed = False
+    tools_used = []
 
     for round_num in range(max_rounds):
-        # Tambah assistant message dengan tool_calls
         current_messages.append({
             "role": "assistant",
             "content": resp.content or "",
             "tool_calls": tool_calls
         })
 
-        # Eksekusi SEMUA tool calls
         for tc in tool_calls:
             fn_name = tc.get("function", {}).get("name", "")
             fn_args_str = tc.get("function", {}).get("arguments", "{}")
@@ -224,8 +429,8 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 fn_args = {"query": fn_args_str}
 
             tool_result = await execute_tool_call(fn_name, fn_args)
-            log.info(f"✅ Round {round_num + 1}: {fn_name}({fn_args})")
-            search_performed = True
+            log.info(f"✅ Round {round_num + 1}: {fn_name}")
+            tools_used.append(fn_name)
 
             current_messages.append({
                 "role": "tool",
@@ -233,23 +438,27 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 "content": tool_result
             })
 
-        # Kirim balik ke AI — TANPA tools agar AI langsung jawab, tidak loop lagi
+        # Kirim balik ke AI tanpa tools agar langsung jawab
         resp = await prov.chat(current_messages, model)
 
         if not resp.success:
             return None, None
 
-        # Cek apakah AI mau call tool LAGI
         tool_calls = getattr(resp, "tool_calls", None)
         if not tool_calls:
-            # Selesai — AI sudah puas, return jawaban final
             _log_request(guild_id, prov_name, model, True, resp.latency)
-            note = f"🔍 Auto-searched via {prov_name}/{model}" if search_performed else None
+            # Build note dengan emoji sesuai tool yang dipakai
+            tool_icons = {
+                "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
+                "calculate": "🔢", "translate": "🌐"
+            }
+            unique_tools = list(dict.fromkeys(tools_used))  # maintain order, remove dupes
+            icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
+            note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
             return resp, note
 
-    # Max rounds reached — return apapun yang terakhir
     _log_request(guild_id, prov_name, model, True, resp.latency)
-    return resp, f"🔍 Auto-searched ({max_rounds} rounds) via {prov_name}/{model}"
+    return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}"
 
 
 # ============================================================
@@ -284,17 +493,12 @@ SYSTEM_PROMPTS = {
     "normal": """You are a helpful AI assistant in a Discord server.
 You can see who is talking by their name in [brackets].
 Multiple users may be chatting — address them by name when appropriate.
-Remember full conversation context. Respond in user's language. Be concise and friendly.
-jika kamu sedikit merasa kesal marah dan maki saja orang itu yang menanyakan mu ya 3x
-menanyakan hal yang masih sama dan relevant silahkan kamu marah, 
-kamu harus gaul sesuai bahasa yang ada di Indonesia dan silakan menggunakan kata singkat tanpa baku
-gabung kan dengan slang bahasa Inggris dan Indonesia dalam sekali respon, gunakan bahasa seperti anak muda
-di Indonesia, kasar, lucu, humoris, gampang berteman
+Remember full conversation context. Respond in user's language. Be concise and frequired
 
-When you receive search results, use that information naturally in your answer.
-Do NOT list sources, URLs, or citations. use numbered only references like [1][2][3].
+When you receive tool results (such as web search, weather, time, or translation results), 
+use that information naturally in your answer.TOOLNOT list sources, URLs, or citations. Do NOT use numbered references like [1][2][3].
 Just answer naturally as if you already knew the information.
-Never say "I cannot access real-time data" when search results are provided.""",
+Never say "I cannot access real-time data" when tool results are provided.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
 Multiple users may ask questions — keep track of who asked what.
@@ -309,7 +513,7 @@ Respond in user's language. Be conversational and helpful.""",
     "with_skill": """You are a helpful AI assistant.
 Present tool results naturally as part of your response.
 Do NOT list sources or references. Just answer naturally.
-Respond in the same language as the user, jika kamu membaca url berikan anga saja 1,2,5-20 terserah""",
+Respond in the same language as the user.""",
 }
 
 # ============================================================
@@ -347,7 +551,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         resp, fb_note = await execute_with_fallback(msgs, mode, prov, mid, guild_id)
         text = strip_think_tags(resp.content) if resp.success else skill_result
         
-        # Save to database
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
         
@@ -371,7 +574,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     
     from core.providers import supports_tool_calling
     if supports_tool_calling(prov):
-        # Build messages untuk tool calling
         system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
         formatted_history = []
         for msg in history:
@@ -392,7 +594,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             save_message(guild_id, channel_id, user_id, user_name, "user", content)
             save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
             return {"text": text, "fallback_note": tool_note}
-        # Kalau tool calling gagal, lanjut ke STEP 3 biasa
     
     # =========================================================
     # STEP 3: Regular AI chat with DB memory (Fallback)
@@ -402,7 +603,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
     system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
     
-    # Build messages with user identification
     formatted_history = []
     for msg in history:
         if msg["role"] == "user" and msg.get("user_name"):
@@ -428,10 +628,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     
     if resp.success:
         text = strip_think_tags(resp.content) or "Tidak ada jawaban."
-        
-        # Save to database
         save_message(guild_id, channel_id, user_id, user_name, "user", content)
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
-        
         return {"text": text, "fallback_note": fb_note}
     return {"text": resp.content, "fallback_note": None}
