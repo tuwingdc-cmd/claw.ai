@@ -14,8 +14,10 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-# Providers yang support tool calling
-TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova", "puter"}
+# ============================================================
+# FIX #3: Hapus "puter" — PuterProvider tidak handle tools
+# ============================================================
+TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova"}
 
 def supports_tool_calling(provider_name: str) -> bool:
     return provider_name in TOOL_CAPABLE_PROVIDERS
@@ -171,6 +173,18 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         headers["X-Title"] = "Discord AI Bot"
         return headers
     
+    def _model_supports_tools(self, model: str) -> bool:
+        """
+        FIX #4: Cek tools=True dari config, bukan hardcoded whitelist.
+        Otomatis sinkron setiap kali config.py di-update.
+        """
+        try:
+            from config import get_model as _get_model
+            model_info = _get_model("openrouter", model)
+            return model_info is not None and model_info.tools
+        except Exception:
+            return False
+    
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -189,18 +203,10 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             "max_tokens": max_tokens,
         }
         
-        # Only send tools for supported models
-        if kwargs.get("tools"):
-            tools_safe = {
-                "openrouter/free",
-                "qwen/qwen3-coder:free",
-                "stepfun/step-3.5-flash:free",
-                "qwen/qwen3-next-80b-a3b-instruct:free",
-                "nvidia/nemotron-3-nano-30b-a3b:free",
-            }
-            if model in tools_safe:
-                payload["tools"] = kwargs["tools"]
-                payload["tool_choice"] = kwargs.get("tool_choice", "auto")
+        # FIX #4: Dinamis dari config, bukan hardcoded whitelist
+        if kwargs.get("tools") and self._model_supports_tools(model):
+            payload["tools"] = kwargs["tools"]
+            payload["tool_choice"] = kwargs.get("tool_choice", "auto")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -243,11 +249,13 @@ class OpenRouterProvider(OpenAICompatibleProvider):
                                 data = await retry.json()
                                 msg = data["choices"][0].get("message", {})
                                 content = msg.get("content") or ""
+                                tool_calls = msg.get("tool_calls")
                                 tokens = data.get("usage", {}).get("total_tokens", 0)
                                 return AIResponse(
                                     success=True, content=content,
                                     provider=self.name, model="openrouter/free",
-                                    tokens_used=tokens, latency=retry_latency, raw=data
+                                    tokens_used=tokens, latency=retry_latency,
+                                    tool_calls=tool_calls, raw=data
                                 )
                             else:
                                 return AIResponse(
