@@ -666,17 +666,35 @@ FETCH_URL_TOOL = {
     "function": {
         "name": "fetch_url",
         "description": (
-            "Read, summarize, or download content from any URL link. "
-            "Supports: Twitter/X, Instagram, TikTok, YouTube, Reddit, GitHub, "
-            "news articles, blogs, Medium, and any website. "
+            "Read, summarize, or download content from ANY URL. "
+            "\n\n"
+            "SUPPORTED PLATFORMS FOR DOWNLOAD (video/audio):\n"
+            "• TikTok (no watermark)\n"
+            "• Instagram (reels, posts, stories, IGTV)\n"
+            "• YouTube (videos, shorts, music)\n"
+            "• Twitter/X (videos, GIFs)\n"
+            "• Facebook (videos, reels)\n"
+            "• Reddit (videos)\n"
+            "• Pinterest\n"
+            "• Twitch (clips)\n"
+            "• SoundCloud\n"
+            "• Spotify (preview only)\n"
+            "• And 1000+ other sites\n"
             "\n"
-            "For YouTube: can read video transcript/subtitles to summarize video content. "
-            "For Twitter: reads tweet text, engagement stats. "
-            "For articles/blogs: reads full article text. "
-            "For TikTok/Instagram: reads caption and metadata. "
+            "SUPPORTED FOR READING/SUMMARIZING:\n"
+            "• News articles, blogs, Medium\n"
+            "• Twitter/X tweets\n"
+            "• YouTube (title, description, transcript)\n"
+            "• GitHub (README, code)\n"
+            "• Any website\n"
             "\n"
-            "Use action='download' to get video download URL (TikTok no watermark, IG, Twitter, YT). "
-            "Use action='read' or 'summarize' to read the content."
+            "ACTIONS:\n"
+            "• action='download' → Download video/audio file\n"
+            "• action='read' → Read content\n"
+            "• action='summarize' → Read for summarization\n"
+            "\n"
+            "IMPORTANT: You CAN download from Instagram, TikTok, YouTube, Twitter, etc. "
+            "Do NOT say any platform is unsupported — try it first!"
         ),
         "parameters": {
             "type": "object",
@@ -688,7 +706,7 @@ FETCH_URL_TOOL = {
                 "action": {
                     "type": "string",
                     "enum": ["read", "summarize", "download"],
-                    "description": "read=get content, summarize=get content for AI summary, download=get video download URL. Default: read"
+                    "description": "read=get content, summarize=for AI summary, download=get video/audio file"
                 }
             },
             "required": ["url"]
