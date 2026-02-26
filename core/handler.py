@@ -1007,11 +1007,13 @@ Do NOT list sources, URLs, or citations. Do NOT use numbered references like [1]
 Just answer naturally as if you already knew the information.
 Never say "I cannot access real-time data" when tool results are provided.
 
+IMPORTANT — URL HANDLING:
+When a user shares ANY URL/link (https://...), you MUST use the fetch_url tool to read it.
+NEVER say "I cannot access the link" — always try fetch_url first.
+This works for: news articles, tweets, YouTube, TikTok, Instagram, GitHub, blogs, any website.
+
 For music: you can play, skip, pause, resume, and stop music.
 If user is NOT in a voice channel, tell them to join one first.
-
-For URLs: you can read articles, tweets, YouTube transcripts, and social media posts.
-You can also download videos from TikTok (no watermark), Instagram, Twitter, YouTube.
 
 For images: you can generate images from text descriptions.""",
 
@@ -1079,7 +1081,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         if detected != "normal":
             mode = detected
     
-    # =========================================================
+        # =========================================================
     # STEP 2B: Auto Tool Calling
     # =========================================================
     
@@ -1102,10 +1104,17 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         else:
             voice_ctx = " [not in voice channel]"
         
+        # ── URL Detection: inject hint so AI uses fetch_url ──
+        user_content = f"[{user_name}]{voice_ctx}: {content}"
+        urls = re.findall(r'https?://[^\s<>"\']+', content)
+        if urls:
+            url_hint = f"\n\n[System hint: User shared {len(urls)} URL(s). Use fetch_url tool to read the content. URLs: {', '.join(urls)}]"
+            user_content += url_hint
+        
         tool_msgs = [
             {"role": "system", "content": system_prompt},
             *formatted_history,
-            {"role": "user", "content": f"[{user_name}]{voice_ctx}: {content}"}
+            {"role": "user", "content": user_content}
         ]
         
         tool_resp, tool_note, tool_actions = await handle_with_tools(tool_msgs, prov, mid, guild_id)
