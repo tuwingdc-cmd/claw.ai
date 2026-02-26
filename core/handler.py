@@ -440,6 +440,7 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
                 "merge_output_format": "mp4",
                 "socket_timeout": 30,
                 "retries": 3,
+                "cookiefile": "/root/claw.ai/cookies.txt",
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
