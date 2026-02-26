@@ -540,12 +540,17 @@ async def on_message(message: discord.Message):
         await message.reply(response_text, mention_author=False)
 
     # ── Execute music actions (if any) ──
+        # ── Execute actions (music, download, image) ──
     for action in result.get("actions", []):
-        if action.get("type") == "music":
-            try:
+        try:
+            if action.get("type") == "music":
                 await execute_music_action(message, action)
-            except Exception as e:
-                log.error(f"🎵 Music action error: {e}")
+            elif action.get("type") == "download":
+                await execute_download_action(message, action)
+            elif action.get("type") == "image":
+                await execute_image_action(message, action)
+        except Exception as e:
+            log.error(f"🔧 Action error [{action.get('type')}]: {e}")
 
 # ============================================================
 # HELPERS
