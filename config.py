@@ -2,6 +2,13 @@
 Configuration & Provider Registry
 All providers, models, and defaults in one place
 — Verified against official docs: Feb 22, 2026 —
+
+LEGEND:
+⭐ = Support Tool Calling (web search, dll)
+🔥 = Recommended (fitur lengkap / performa bagus)
+👁️ = Vision (bisa lihat gambar)
+🧠 = Reasoning mode
+🔍 = Search/Grounding built-in
 """
 
 import os
@@ -81,7 +88,7 @@ class Provider:
     rate_limit: str = ""
 
 # ============================================================
-# PROVIDER REGISTRY - UPDATED 24 FEB 2026
+# PROVIDER REGISTRY - UPDATED FEB 27, 2026
 # ============================================================
 
 PROVIDERS: Dict[str, Provider] = {
@@ -92,23 +99,30 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.groq.com/openai/v1/chat/completions",
         rate_limit="30 RPM (70B), 60 RPM (8B)",
         models=[
-            # Compound AI (Web Search + Tool Use)
-            Model("compound-beta", "Groq Compound Beta", ["normal", "search"], 131072),
-            Model("compound-beta-mini", "Groq Compound Beta Mini", ["normal", "search"], 131072),
-            # Production Chat
-            Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072),
-            Model("llama-3.1-8b-instant", "Llama 3.1 8B", ["normal"], 131072),
-            Model("openai/gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
-            Model("openai/gpt-oss-20b", "GPT-OSS 20B", ["normal"], 131072),
-            # Preview - Vision
-            Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick", ["normal", "reasoning"], 131072, vision=True),
-            Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["normal", "reasoning"], 131072, vision=True),
-            # Preview - Reasoning
-            Model("qwen-qwq-32b", "Qwen QWQ 32B", ["reasoning"], 131072),
-            Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
+            # 🔥🔍 Compound AI (Web Search + Tool Use Built-in)
+            Model("compound-beta", "Groq Compound Beta 🔥🔍", ["normal", "search"], 131072, tools=True),
+            Model("compound-beta-mini", "Groq Compound Beta Mini 🔍", ["normal", "search"], 131072, tools=True),
+            
+            # ⭐ Production Chat dengan Tools
+            Model("llama-3.3-70b-versatile", "Llama 3.3 70B", ["normal"], 131072, tools=True),
+            Model("llama-3.1-8b-instant", "Llama 3.1 8B", ["normal"], 131072, tools=True),
+            
+            # 🔥⭐🧠 GPT-OSS Series
+            Model("openai/gpt-oss-120b", "GPT-OSS 120B 🔥⭐🧠", ["normal", "reasoning"], 131072, tools=True),
+            Model("openai/gpt-oss-20b", "GPT-OSS 20B ⭐", ["normal"], 131072, tools=True),
+            
+            # 👁️🧠 Preview - Vision + Reasoning
+            Model("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick 👁️🧠⭐", ["normal", "reasoning"], 131072, vision=True, tools=True),
+            Model("meta-llama/llama-4-scout-17b-16e-instruct", "Llama 4 Scout 👁️🧠⭐", ["normal", "reasoning"], 131072, vision=True, tools=True),
+            
+            # 🧠 Preview - Reasoning Only
+            Model("qwen-qwq-32b", "Qwen QWQ 32B 🧠", ["reasoning"], 131072),
+            Model("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill 70B 🧠", ["reasoning"], 131072),
+            
             # Preview - Chat
-            Model("moonshotai/kimi-k2-instruct-0905", "Kimi K2", ["normal"], 131072),
-            Model("qwen/qwen-3-32b", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            Model("moonshotai/kimi-k2-instruct-0905", "Kimi K2 ⭐", ["normal"], 131072, tools=True),
+            Model("qwen/qwen-3-32b", "Qwen 3 32B 🧠⭐", ["normal", "reasoning"], 32768, tools=True),
+            
             # Audio
             Model("whisper-large-v3", "Whisper V3", ["audio"]),
             Model("whisper-large-v3-turbo", "Whisper V3 Turbo", ["audio"]),
@@ -121,35 +135,47 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://openrouter.ai/api/v1/chat/completions",
         rate_limit="20 RPM, 200 RPD (free)",
         models=[
-            # Auto Router (MOST RELIABLE)
-            Model("openrouter/free", "Auto (Free Router)", ["normal", "reasoning"], 200000, vision=True, tools=True),
+            # 🔥⭐👁️🧠 Auto Router - PALING RECOMMENDED
+            Model("openrouter/free", "Auto (Free Router) 🔥⭐👁️🧠", ["normal", "reasoning"], 200000, vision=True, tools=True),
             
-            # Verified Feb 2026 — Chat / Normal
-            Model("meta-llama/llama-4-maverick:free", "Llama 4 Maverick", ["normal", "reasoning"]),
-            Model("meta-llama/llama-4-scout:free", "Llama 4 Scout", ["normal", "reasoning"]),
-            Model("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B", ["normal"], 131072),
-            Model("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3 0324", ["normal"]),
+            # ⭐👁️🧠 Llama 4 Series - Semua Support Tools
+            Model("meta-llama/llama-4-maverick:free", "Llama 4 Maverick ⭐👁️🧠", ["normal", "reasoning"], 131072, vision=True, tools=True),
+            Model("meta-llama/llama-4-scout:free", "Llama 4 Scout ⭐👁️🧠", ["normal", "reasoning"], 131072, vision=True, tools=True),
+            
+            # ⭐ Llama 3.3 - Tools Supported
+            Model("meta-llama/llama-3.3-70b-instruct:free", "Llama 3.3 70B ⭐", ["normal"], 131072, tools=True),
+            
+            # ⭐ DeepSeek Series
+            Model("deepseek/deepseek-chat-v3-0324:free", "DeepSeek Chat V3 ⭐", ["normal"], 64000, tools=True),
             Model("deepseek/deepseek-v3-base:free", "DeepSeek V3 Base", ["normal"]),
-            Model("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1", ["normal"]),
+            Model("deepseek/deepseek-r1-zero:free", "DeepSeek R1 Zero 🧠", ["reasoning"]),
+            Model("deepseek/deepseek-r1:free", "DeepSeek R1 🧠", ["reasoning"]),
+            
+            # ⭐ Mistral
+            Model("mistralai/mistral-small-3.1-24b-instruct:free", "Mistral Small 3.1 ⭐", ["normal"], 32768, tools=True),
+            
+            # 🔥⭐🧠 Qwen Series - Context Besar
+            Model("qwen/qwen3-coder:free", "Qwen3 Coder 480B 🔥⭐🧠", ["reasoning", "normal"], 262144, tools=True),
+            Model("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B ⭐", ["normal"], 262144, tools=True),
+            Model("qwen/qwen3-235b-a22b-thinking-2507:free", "Qwen3 235B Thinking 🧠", ["reasoning"], 128000),
+            Model("qwen/qwen2.5-vl-3b-instruct:free", "Qwen 2.5 VL 3B 👁️", ["normal"], 32768, vision=True),
+            
+            # ⭐🧠 GLM
+            Model("zhipuai/glm-4.5-air:free", "GLM 4.5 Air ⭐🧠", ["normal", "reasoning"], 128000, tools=True),
+            
+            # ⭐ Nvidia
             Model("nvidia/llama-3.1-nemotron-nano-8b-v1:free", "Nemotron Nano 8B", ["normal"]),
+            Model("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B ⭐", ["normal"], 256000, tools=True),
+            
+            # ⭐🧠 Step
+            Model("stepfun/step-3.5-flash:free", "Step 3.5 Flash ⭐🧠", ["reasoning"], 256000, tools=True),
+            
+            # Others
             Model("nousresearch/deephermes-3-llama-3-8b-preview:free", "DeepHermes 3 8B", ["normal"]),
-            Model("qwen/qwen2.5-vl-3b-instruct:free", "Qwen 2.5 VL 3B", ["normal"], vision=True),
-            
-            # Verified Feb 2026 — Reasoning
-            Model("deepseek/deepseek-r1-zero:free", "DeepSeek R1 Zero", ["reasoning"]),
-            Model("deepseek/deepseek-r1:free", "DeepSeek R1", ["reasoning"]),
-            Model("qwen/qwen3-coder:free", "Qwen3 Coder 480B", ["reasoning", "normal"], 262144, tools=True),
-            Model("stepfun/step-3.5-flash:free", "Step 3.5 Flash", ["reasoning"], 256000, tools=True),
-            Model("qwen/qwen3-235b-a22b-thinking-2507:free", "Qwen3 235B Thinking", ["reasoning"], 128000),
-            Model("moonshotai/kimi-vl-a3b-thinking:free", "Kimi VL Thinking", ["reasoning"], vision=True),
-            
-            # New Feb 2026
-            Model("qwen/qwen3-next-80b-a3b-instruct:free", "Qwen3 Next 80B", ["normal"], 262144, tools=True),
-            Model("nvidia/nemotron-3-nano-30b-a3b:free", "Nemotron 3 Nano 30B", ["normal"], 256000, tools=True),
+            Model("moonshotai/kimi-vl-a3b-thinking:free", "Kimi VL Thinking 👁️🧠", ["reasoning"], 128000, vision=True),
             Model("arcee-ai/trinity-large-preview:free", "Trinity Large Preview", ["normal"], 524288),
             Model("arcee-ai/trinity-mini:free", "Trinity Mini", ["normal"]),
-            Model("zhipuai/glm-4.5-air:free", "GLM 4.5 Air", ["normal", "reasoning"]),
-            Model("allenai/olmo-3.1-32b-think:free", "OLMo 3.1 32B Think", ["reasoning"]),
+            Model("allenai/olmo-3.1-32b-think:free", "OLMo 3.1 32B Think 🧠", ["reasoning"]),
         ]
     ),
     
@@ -161,13 +187,15 @@ PROVIDERS: Dict[str, Provider] = {
         auth_prefix="",
         rate_limit="5-15 RPM, 100-1000 RPD (free tier)",
         models=[
-            # Gemini 3 Series (Latest)
-            Model("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", ["normal", "reasoning"], 1048576),
-            Model("gemini-3-flash-preview", "Gemini 3 Flash Preview", ["normal", "reasoning"], 1048576),
-            # Gemini 2.5 Series (Stable)
-            Model("gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
-            Model("gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
+            # 🔥🧠 Gemini 3 Series (Latest)
+            Model("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview 🔥🧠", ["normal", "reasoning"], 1048576),
+            Model("gemini-3-flash-preview", "Gemini 3 Flash Preview 🧠", ["normal", "reasoning"], 1048576),
+            
+            # 🧠 Gemini 2.5 Series (Stable)
+            Model("gemini-2.5-pro", "Gemini 2.5 Pro 🧠", ["normal", "reasoning"], 1048576),
+            Model("gemini-2.5-flash", "Gemini 2.5 Flash 🧠", ["normal", "reasoning"], 1048576),
             Model("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", ["normal"], 1048576),
+            
             # Gemma
             Model("gemma-3-27b-it", "Gemma 3 27B", ["normal"]),
             Model("gemma-2-9b-it", "Gemma 2 9B", ["normal"]),
@@ -180,12 +208,13 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cerebras.ai/v1/chat/completions",
         rate_limit="30 RPM, 1M tokens/day (free tier)",
         models=[
-            # Currently Available (Feb 2026)
-            Model("zai-glm-4.7", "Z.ai GLM 4.7", ["normal", "reasoning"], 128000, tools=True),
-            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072, tools=True),
-            Model("llama3.1-8b", "Llama 3.1 8B", ["normal"], 128000),
-            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct", ["normal"], 262144),
-            # Note: llama-3.3-70b and qwen-3-32b DEPRECATED since Feb 16, 2026 - REMOVED
+            # 🔥⭐🧠 Top Models
+            Model("zai-glm-4.7", "Z.ai GLM 4.7 🔥⭐🧠", ["normal", "reasoning"], 128000, tools=True),
+            Model("gpt-oss-120b", "GPT-OSS 120B 🔥⭐🧠", ["normal", "reasoning"], 131072, tools=True),
+            
+            # ⭐ Standard
+            Model("llama3.1-8b", "Llama 3.1 8B ⭐", ["normal"], 128000, tools=True),
+            Model("qwen-3-235b-a22b-instruct-2507", "Qwen 3 235B Instruct ⭐", ["normal"], 262144, tools=True),
         ]
     ),
     
@@ -195,20 +224,27 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.sambanova.ai/v1/chat/completions",
         rate_limit="Free tier available",
         models=[
-            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"], 8192),
-            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B", ["normal"], 131072),
-            Model("Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout", ["normal"], 131072, vision=True),
-            Model("Llama-4-Maverick-17B-128E-Instruct", "Llama 4 Maverick", ["normal"], 131072, vision=True),
-            Model("DeepSeek-R1", "DeepSeek R1", ["reasoning"], 16384),
-            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"], 131072),
-            Model("DeepSeek-V3-0324", "DeepSeek V3 0324", ["normal"], 8192),
-            Model("Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
-            Model("QwQ-32B", "QwQ 32B", ["reasoning"], 32768),
-            Model("gpt-oss-120b", "GPT-OSS 120B", ["normal", "reasoning"], 131072),
+            # ⭐ Chat
+            Model("Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B ⭐", ["normal"], 8192, tools=True),
+            Model("Meta-Llama-3.3-70B-Instruct", "Llama 3.3 70B ⭐", ["normal"], 131072, tools=True),
+            
+            # ⭐👁️ Vision
+            Model("Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout ⭐👁️", ["normal"], 131072, vision=True, tools=True),
+            Model("Llama-4-Maverick-17B-128E-Instruct", "Llama 4 Maverick ⭐👁️", ["normal"], 131072, vision=True, tools=True),
+            
+            # 🧠 Reasoning
+            Model("DeepSeek-R1", "DeepSeek R1 🧠", ["reasoning"], 16384),
+            Model("DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B 🧠", ["reasoning"], 131072),
+            Model("DeepSeek-V3-0324", "DeepSeek V3 0324 ⭐", ["normal"], 8192, tools=True),
+            
+            # ⭐🧠
+            Model("Qwen3-32B", "Qwen 3 32B ⭐🧠", ["normal", "reasoning"], 32768, tools=True),
+            Model("QwQ-32B", "QwQ 32B 🧠", ["reasoning"], 32768),
+            Model("gpt-oss-120b", "GPT-OSS 120B 🔥⭐🧠", ["normal", "reasoning"], 131072, tools=True),
         ]
     ),
     
-        # ==================== POLLINATIONS ====================
+    # ==================== POLLINATIONS ====================
     "pollinations": Provider(
         name="Pollinations",
         endpoint="https://gen.pollinations.ai/v1/chat/completions",
@@ -219,37 +255,42 @@ PROVIDERS: Dict[str, Provider] = {
             # Fast / Cheap
             Model("qwen-safety", "Qwen3Guard 8B", ["normal"]),
             Model("nova-fast", "Amazon Nova Micro", ["normal"]),
-            Model("openai-fast", "OpenAI GPT-5 Nano", ["normal"], vision=True),
-            Model("gemini-fast", "Gemini 2.5 Flash Lite", ["normal"], vision=True),
+            Model("openai-fast", "OpenAI GPT-5 Nano 👁️", ["normal"], vision=True),
+            Model("gemini-fast", "Gemini 2.5 Flash Lite 👁️", ["normal"], vision=True),
             Model("qwen-coder", "Qwen3 Coder 30B", ["normal"]),
             Model("mistral", "Mistral Small 3.2 24B", ["normal"]),
+            
             # Mid Tier
-            Model("openai", "OpenAI GPT-5 Mini", ["normal"], vision=True),
+            Model("openai", "OpenAI GPT-5 Mini 👁️", ["normal"], vision=True),
             Model("deepseek", "DeepSeek V3.2", ["normal"]),
             Model("minimax", "MiniMax M2.1", ["normal"]),
-            Model("kimi", "Kimi K2.5", ["normal"], vision=True),
+            Model("kimi", "Kimi K2.5 👁️", ["normal"], vision=True),
             Model("glm", "Z.ai GLM-5", ["normal"]),
-            Model("perplexity-fast", "Perplexity Sonar", ["search"]),
-            # Premium (Free tanpa sk_ key)
-            Model("openai-large", "OpenAI GPT-5.2", ["normal"], vision=True),
-            Model("perplexity-reasoning", "Perplexity Reasoning", ["reasoning", "search"]),
-            Model("openai-audio", "GPT-4o Mini Audio", ["normal"], vision=True),
+            
+            # 🔍 Search Built-in
+            Model("perplexity-fast", "Perplexity Sonar 🔍", ["search"]),
+            Model("gemini-search", "Gemini 2.5 Flash Search 🔥🔍👁️", ["search"], vision=True, tools=True),
+            
+            # Premium
+            Model("openai-large", "OpenAI GPT-5.2 👁️", ["normal"], vision=True),
+            Model("perplexity-reasoning", "Perplexity Reasoning 🔍🧠", ["reasoning", "search"]),
+            Model("openai-audio", "GPT-4o Mini Audio 👁️", ["normal"], vision=True),
             Model("chickytutor", "ChickyTutor AI", ["normal"]),
             Model("midijourney", "MIDIjourney", ["normal"]),
-            # Search
-            Model("gemini-search", "Gemini 2.5 Flash Lite Search", ["search"], vision=True, tools=True),
-            # PAID ONLY (💎) - butuh sk_ key berbayar
-            Model("grok", "xAI Grok 4 Fast", ["normal"]),
-            Model("gemini", "Google Gemini 3 Flash", ["normal"], vision=True),
-            Model("claude-fast", "Claude Haiku 4.5", ["normal"], vision=True),
-            Model("gemini-legacy", "Gemini 2.5 Pro", ["normal", "reasoning"], vision=True),
-            Model("claude", "Claude Sonnet 4.6", ["normal"], vision=True),
-            Model("gemini-large", "Gemini 3 Pro", ["normal", "reasoning"], vision=True),
-            Model("claude-large", "Claude Opus 4.6", ["normal"], vision=True),
-            Model("claude-legacy", "Claude Opus 4.5", ["normal"], vision=True),
+            
+            # PAID ONLY (💎)
+            Model("grok", "xAI Grok 4 Fast 💎", ["normal"]),
+            Model("gemini", "Google Gemini 3 Flash 💎👁️", ["normal"], vision=True),
+            Model("claude-fast", "Claude Haiku 4.5 💎👁️", ["normal"], vision=True),
+            Model("gemini-legacy", "Gemini 2.5 Pro 💎👁️🧠", ["normal", "reasoning"], vision=True),
+            Model("claude", "Claude Sonnet 4.6 💎👁️", ["normal"], vision=True),
+            Model("gemini-large", "Gemini 3 Pro 💎👁️🧠", ["normal", "reasoning"], vision=True),
+            Model("claude-large", "Claude Opus 4.6 💎👁️", ["normal"], vision=True),
+            Model("claude-legacy", "Claude Opus 4.5 💎👁️", ["normal"], vision=True),
+            
             # Alpha / Community
-            Model("nomnom", "NomNom", ["reasoning", "search"]),
-            Model("polly", "Polly", ["normal", "reasoning", "search"], vision=True),
+            Model("nomnom", "NomNom 🔍🧠", ["reasoning", "search"]),
+            Model("polly", "Polly 🔥🔍👁️🧠", ["normal", "reasoning", "search"], vision=True),
         ]
     ),
     
@@ -259,7 +300,7 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
         rate_limit="10K neurons/day",
         models=[
-            Model("@cf/meta/llama-4-scout-17b-16e-instruct", "Llama 4 Scout", ["normal", "reasoning"]),
+            Model("@cf/meta/llama-4-scout-17b-16e-instruct", "Llama 4 Scout 🧠", ["normal", "reasoning"]),
             Model("@cf/meta/llama-3.3-70b-instruct-fp8-fast", "Llama 3.3 70B", ["normal"]),
             Model("@cf/meta/llama-3.1-8b-instruct", "Llama 3.1 8B", ["normal"]),
             Model("@cf/mistralai/mistral-small-3.1-24b-instruct", "Mistral Small 3.1", ["normal"]),
@@ -273,10 +314,10 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://router.huggingface.co/v1/chat/completions",
         rate_limit="~50 calls/day (free)",
         models=[
-            Model("deepseek-ai/DeepSeek-R1", "DeepSeek R1", ["reasoning"]),
-            Model("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528", ["reasoning"]),
-            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "DeepSeek R1 Distill 7B", ["reasoning"]),
-            Model("deepseek-ai/DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B", ["reasoning"]),
+            Model("deepseek-ai/DeepSeek-R1", "DeepSeek R1 🧠", ["reasoning"]),
+            Model("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528 🧠", ["reasoning"]),
+            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "DeepSeek R1 Distill 7B 🧠", ["reasoning"]),
+            Model("deepseek-ai/DeepSeek-R1-Distill-Llama-70B", "DeepSeek R1 Distill 70B 🧠", ["reasoning"]),
             Model("meta-llama/Meta-Llama-3.1-8B-Instruct", "Llama 3.1 8B", ["normal"]),
             Model("mistralai/Mistral-7B-Instruct-v0.3", "Mistral 7B", ["normal"]),
             Model("HuggingFaceH4/zephyr-7b-beta", "Zephyr 7B", ["normal"]),
@@ -289,8 +330,8 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cohere.ai/v2/chat",
         rate_limit="1000 calls/month (trial)",
         models=[
-            Model("command-a-03-2025", "Command A", ["normal"]),  # FIXED: was command-a-08-2025
-            Model("command-r-plus-08-2024", "Command R+", ["normal", "search"]),
+            Model("command-a-03-2025", "Command A", ["normal"]),
+            Model("command-r-plus-08-2024", "Command R+ 🔍", ["normal", "search"]),
             Model("command-r-08-2024", "Command R", ["normal"]),
             Model("command-r7b-12-2024", "Command R 7B", ["normal"]),
         ]
@@ -306,16 +347,17 @@ PROVIDERS: Dict[str, Provider] = {
             Model("Qwen/Qwen2.5-7B-Instruct", "Qwen 2.5 7B", ["normal"], 32768),
             Model("Qwen/Qwen2.5-Coder-7B-Instruct", "Qwen 2.5 Coder 7B", ["normal"], 32768),
             Model("THUDM/GLM-4-9B-0414", "GLM 4 9B 0414", ["normal"], 128000),
-            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "DeepSeek R1 Distill 7B", ["reasoning"], 32768),
-            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "DeepSeek R1 Distill 14B", ["reasoning"], 32768),
-            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "DeepSeek R1 Distill 32B", ["reasoning"], 32768),
-            Model("Qwen/QwQ-32B", "QwQ 32B", ["reasoning"], 32768),
+            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "DeepSeek R1 Distill 7B 🧠", ["reasoning"], 32768),
+            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", "DeepSeek R1 Distill 14B 🧠", ["reasoning"], 32768),
+            Model("deepseek-ai/DeepSeek-R1-Distill-Qwen-32B", "DeepSeek R1 Distill 32B 🧠", ["reasoning"], 32768),
+            Model("Qwen/QwQ-32B", "QwQ 32B 🧠", ["reasoning"], 32768),
+            
             # Paid Models
-            Model("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528", ["reasoning"], 164000),
-            Model("deepseek-ai/DeepSeek-R1", "DeepSeek R1", ["reasoning"], 164000),
+            Model("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528 🧠", ["reasoning"], 164000),
+            Model("deepseek-ai/DeepSeek-R1", "DeepSeek R1 🧠", ["reasoning"], 164000),
             Model("deepseek-ai/DeepSeek-V3-0324", "DeepSeek V3 0324", ["normal"], 164000),
             Model("Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen 2.5 Coder 32B", ["normal"], 32768),
-            Model("Qwen/Qwen3-32B", "Qwen 3 32B", ["normal", "reasoning"], 32768),
+            Model("Qwen/Qwen3-32B", "Qwen 3 32B 🧠", ["normal", "reasoning"], 32768),
         ]
     ),
     
@@ -325,9 +367,9 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.routeway.ai/v1/chat/completions",
         rate_limit="20 RPM, 200 RPD (free models)",
         models=[
-            Model("glm-4.6:free", "GLM 4.6", ["normal", "reasoning"], 200000, tools=True),
+            Model("glm-4.6:free", "GLM 4.6 🔥⭐🧠", ["normal", "reasoning"], 200000, tools=True),
             Model("glm-4.5-air:free", "GLM 4.5 Air", ["normal"], 131000),
-            Model("deepseek-r1:free", "DeepSeek R1", ["reasoning"], 164000),
+            Model("deepseek-r1:free", "DeepSeek R1 🧠", ["reasoning"], 164000),
             Model("minimax-m2:free", "MiniMax M2", ["normal"], 197000),
             Model("kimi-k2:free", "Kimi K2", ["normal"], 262000),
             Model("deepseek-v3.1:free", "DeepSeek V3.1", ["normal"], 131000),
@@ -345,7 +387,7 @@ PROVIDERS: Dict[str, Provider] = {
         rate_limit="unlimited",
         models=[
             Model("tinyllama", "TinyLlama", ["normal"]),
-            Model("deepseek-r1:1.5b", "DeepSeek R1 1.5B", ["reasoning"]),
+            Model("deepseek-r1:1.5b", "DeepSeek R1 1.5B 🧠", ["reasoning"]),
         ]
     ),
 
@@ -355,20 +397,20 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.puter.com/drivers/call",
         rate_limit="Free Tier (Puter.com)",
         models=[
-            Model("gpt-4o", "GPT-4o", ["normal"], 128000),
-            Model("gpt-4o-mini", "GPT-4o Mini", ["normal"], 128000),
+            Model("gpt-4o", "GPT-4o 🔥👁️", ["normal"], 128000, vision=True),
+            Model("gpt-4o-mini", "GPT-4o Mini 👁️", ["normal"], 128000, vision=True),
             Model("gpt-4.1-nano", "GPT-4.1 Nano", ["normal"], 128000),
-            Model("claude-sonnet-4", "Claude Sonnet 4", ["normal", "reasoning"], 200000),
-            Model("claude-3-5-sonnet", "Claude 3.5 Sonnet", ["normal", "reasoning"], 200000),
-            Model("google/gemini-2.5-flash", "Gemini 2.5 Flash", ["normal", "reasoning"], 1048576),
-            Model("google/gemini-2.5-pro", "Gemini 2.5 Pro", ["normal", "reasoning"], 1048576),
-            Model("deepseek/deepseek-r1", "DeepSeek R1", ["reasoning"], 128000),
+            Model("claude-sonnet-4", "Claude Sonnet 4 🔥🧠", ["normal", "reasoning"], 200000),
+            Model("claude-3-5-sonnet", "Claude 3.5 Sonnet 🧠", ["normal", "reasoning"], 200000),
+            Model("google/gemini-2.5-flash", "Gemini 2.5 Flash 🧠", ["normal", "reasoning"], 1048576),
+            Model("google/gemini-2.5-pro", "Gemini 2.5 Pro 🔥🧠", ["normal", "reasoning"], 1048576),
+            Model("deepseek/deepseek-r1", "DeepSeek R1 🧠", ["reasoning"], 128000),
             Model("deepseek/deepseek-chat", "DeepSeek Chat", ["normal"], 128000),
-            Model("x-ai/grok-3", "Grok 3", ["normal", "reasoning"], 131072),
+            Model("x-ai/grok-3", "Grok 3 🔥🧠", ["normal", "reasoning"], 131072),
             Model("x-ai/grok-3-mini", "Grok 3 Mini", ["normal"], 131072),
             Model("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B", ["normal"], 131072),
-            Model("perplexity/sonar", "Perplexity Sonar", ["search"], 128000),
-            Model("perplexity/sonar-pro", "Perplexity Sonar Pro", ["search"], 200000),
+            Model("perplexity/sonar", "Perplexity Sonar 🔍", ["search"], 128000),
+            Model("perplexity/sonar-pro", "Perplexity Sonar Pro 🔥🔍", ["search"], 200000),
         ]
     ),
 }
@@ -418,14 +460,13 @@ FALLBACK_CHAINS = {
     "normal": [
         ("groq", "llama-3.3-70b-versatile"),
         ("groq", "llama-3.1-8b-instant"),
-        ("cerebras", "llama-3.3-70b"),
+        ("cerebras", "llama3.1-8b"),
         ("sambanova", "Meta-Llama-3.3-70B-Instruct"),
         ("openrouter", "openrouter/free"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
         ("openrouter", "deepseek/deepseek-chat-v3-0324:free"),
         ("pollinations", "openai"),
         ("pollinations", "gemini"),
-        ("cerebras", "llama3.1-8b"),
         ("cloudflare", "@cf/meta/llama-3.1-8b-instruct"),
         ("puter", "gpt-4o-mini"),
     ],
