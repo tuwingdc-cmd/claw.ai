@@ -636,25 +636,6 @@ GET_FORECAST_TOOL = {
     }
 }
 
-    # ── GET FORECAST ──
-    elif tool_name == "get_forecast":
-        from skills.weather_skill import get_forecast
-        city = tool_args.get("city", "Jakarta")
-        days = tool_args.get("days", 3)
-        log.info(f"🌤️ Tool: get_forecast({city}, {days} days)")
-        result = await get_forecast(city, days)
-        if result["success"]:
-            lines = [f"📅 Ramalan Cuaca {result['city']} ({days} hari):\n"]
-            for f in result["forecasts"]:
-                lines.append(
-                    f"• {f['date']}: {f['description']}\n"
-                    f"  🌡️ {f['temp_min']}°C - {f['temp_max']}°C | "
-                    f"🌧️ {f['rain_chance']}% hujan | "
-                    f"💨 {f['wind_max']} km/h"
-                )
-            return "\n".join(lines)
-        return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
-
 CALCULATE_TOOL = {
     "type": "function",
     "function": {
@@ -677,31 +658,6 @@ CALCULATE_TOOL = {
 }
 
 TRANSLATE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "translate",
-        "description": (
-            "Translate text between languages naturally like a native speaker. "
-            "Understands slang, idioms, and cultural context. "
-            "Use when user asks to translate something, or wants to know how to say something in another language."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "The text to translate"},
-                "target_language": {"type": "string", "description": "Target language, e.g. English, Indonesian, Japanese, Korean, Spanish"},
-                "style": {
-                    "type": "string",
-                    "enum": ["natural", "formal", "casual"],
-                    "description": "Translation style. natural=everyday speech, formal=polished, casual=slang/texting. Default: natural"
-                }
-            },
-            "required": ["text", "target_language"]
-        }
-    }
-}
-
-PLAY_MUSIC_TOOL = {
     "type": "function",
     "function": {
         "name": "play_music",
@@ -966,8 +922,8 @@ SET_REMINDER_TOOL = {
 
 
 TOOLS_LIST = [
-    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,  # <-- tambah
-    CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, 
+    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
+    CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
@@ -1027,14 +983,31 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                 f"💧 Kelembapan: {result['humidity']}%\n"
                 f"💨 Angin: {result['wind_speed']} km/h"
             )
-            # Tambahan info jika ada
             if result.get('pressure'):
                 response += f"\n🌡️ Tekanan: {result['pressure']} hPa"
             if result.get('visibility'):
                 response += f"\n👁️ Visibilitas: {result['visibility']} km"
-            
             response += f"\n\n📡 Sumber: {result.get('source', 'Weather API')}"
             return response
+        return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
+
+    # ── GET FORECAST ──
+    elif tool_name == "get_forecast":
+        from skills.weather_skill import get_forecast
+        city = tool_args.get("city", "Jakarta")
+        days = tool_args.get("days", 3)
+        log.info(f"🌤️ Tool: get_forecast({city}, {days} days)")
+        result = await get_forecast(city, days)
+        if result["success"]:
+            lines = [f"📅 Ramalan Cuaca {result['city']} ({days} hari):\n"]
+            for f in result["forecasts"]:
+                lines.append(
+                    f"• {f['date']}: {f['description']}\n"
+                    f"  🌡️ {f['temp_min']}°C - {f['temp_max']}°C | "
+                    f"🌧️ {f['rain_chance']}% hujan | "
+                    f"💨 {f['wind_max']} km/h"
+                )
+            return "\n".join(lines)
         return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
 
     # ── CALCULATE ──
