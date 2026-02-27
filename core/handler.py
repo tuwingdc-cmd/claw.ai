@@ -1249,42 +1249,51 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
     # ── GET SERVER INFO ──
     elif tool_name == "get_server_info":
         info_type = tool_args.get("info_type", "all")
-        log.info(f"👥 Tool: get_server_info({info_type})")
-        
         server_info = tool_args.get("_server_info", {})
+        log.info(f"👥 Tool: get_server_info({info_type}) | has_data={bool(server_info)} | members={len(server_info.get('all_members', []))}")
+        
+        if not server_info:
+            return "Server info tidak tersedia. Bot mungkin tidak memiliki akses ke member list."
         
         lines = []
+        server_name = server_info.get("server_name", "Unknown")
+        total = server_info.get("total_members", 0)
+        lines.append(f"Server: {server_name} | Total: {total} members")
+        
+        if info_type in ("members", "all"):
+            all_members = server_info.get("all_members", [])
+            online = server_info.get("online_members", [])
+            
+            if all_members:
+                lines.append(f"\nSemua Member ({len(all_members)} orang, non-bot):")
+                for m in all_members:
+                    lines.append(f"  {m}")
+            
+            if online:
+                lines.append(f"\nYang Online ({len(online)}):")
+                for m in online:
+                    lines.append(f"  {m}")
+            else:
+                lines.append("\nTidak ada member yang online saat ini.")
         
         if info_type in ("voice", "all"):
             voice = server_info.get("voice_channels", [])
+            lines.append("\nVoice Channels:")
             if voice:
-                lines.append("🎤 **Voice Channels:**")
                 for v in voice:
                     lines.append(f"  {v}")
             else:
-                lines.append("🎤 Tidak ada yang di voice channel.")
-        
-        if info_type in ("members", "all"):
-            online = server_info.get("online_members", [])
-            if online:
-                lines.append(f"\n👥 **Online Members ({len(online)}):**")
-                for m in online[:20]:
-                    lines.append(f"  {m}")
-            else:
-                lines.append("\n👥 Tidak ada member online.")
+                lines.append("  Tidak ada voice channel.")
         
         if info_type in ("channels", "all"):
             channels = server_info.get("text_channels", [])
-            if channels:
-                lines.append(f"\n📝 **Text Channels ({len(channels)}):**")
-                for ch in channels[:15]:
-                    lines.append(f"  {ch}")
+            lines.append(f"\nText Channels ({len(channels)}):")
+            for ch in channels:
+                lines.append(f"  {ch}")
         
-        server_name = server_info.get("server_name", "Unknown")
-        total = server_info.get("total_members", 0)
-        lines.insert(0, f"🖥️ **Server: {server_name}** | Total members: {total}\n")
-        
-        return "\n".join(lines) if lines else "Tidak ada info server yang tersedia."
+        result = "\n".join(lines)
+        log.info(f"👥 Returning: {result[:200]}")
+        return result
 
     # ── SYSTEM STATUS ──
     elif tool_name == "system_status":
