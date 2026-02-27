@@ -1350,6 +1350,8 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     tools_used = []
     pending_actions = []  # music, download, image
 
+        # ... kode sebelumnya ...
+
     for round_num in range(max_rounds):
         current_messages.append({
             "role": "assistant",
@@ -1357,15 +1359,16 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             "tool_calls": tool_calls
         })
 
-        for tc in tool_calls:
-    fn_name = tc.get("function", {}).get("name", "")
-    fn_args_str = tc.get("function", {}).get("arguments", "{}")
-    tool_call_id = tc.get("id", f"call_{round_num}")
+        for tc in tool_calls:  # Baris 1360
+            # Baris 1361 harus ada 4 spasi (atau 1 tab) lebih dalam dari baris 1360
+            fn_name = tc.get("function", {}).get("name", "")
+            fn_args_str = tc.get("function", {}).get("arguments", "{}")
+            tool_call_id = tc.get("id", f"call_{round_num}")
 
-    try:
-        fn_args = json.loads(fn_args_str)
-    except (json.JSONDecodeError, TypeError):
-        fn_args = {"query": fn_args_str}
+            try:
+                fn_args = json.loads(fn_args_str)
+            except (json.JSONDecodeError, TypeError):
+                fn_args = {"query": fn_args_str}
 
     # Capture music action manually
     if fn_name == "play_music":
