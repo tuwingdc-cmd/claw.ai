@@ -364,8 +364,116 @@ async def execute_image_action(message: discord.Message, action: dict):
 
 
 # ============================================================
-# EVENTS
+# FILE UPLOAD ACTION HANDLER
 # ============================================================
+
+async def execute_file_upload_action(message: discord.Message, action: dict):
+    """Upload generated file to Discord"""
+    local_path = action.get("local_path", "")
+    filename = action.get("filename", "document")
+    temp_dir = action.get("temp_dir", "")
+    
+    if not local_path or not os.path.exists(local_path):
+        return
+    
+    try:
+        file_size = os.path.getsize(local_path)
+        
+        if file_size > 25_000_000:
+            await message.channel.send(f"❌ File terlalu besar ({file_size / 1_000_000:.1f} MB)")
+            return
+        
+        discord_file = discord.File(local_path, filename=filename)
+        await message.channel.send(
+            content=f"📎 **{filename}**",
+            file=discord_file
+        )
+        log.info(f"✅ File uploaded: {filename}")
+    
+    except Exception as e:
+        log.error(f"📄 File upload error: {e}")
+    
+    finally:
+        try:
+            if os.path.exists(local_path):
+                os.unlink(local_path)
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
+
+
+# ============================================================
+# REMINDER ACTION HANDLER
+# ============================================================
+
+# Global storage for active reminders
+_active_reminders: Dict[str, asyncio.Task] = {}
+
+async def execute_reminder_action(message: discord.Message, action: dict):
+    """Set reminder that will ping user"""
+    reminder_msg = action.get("message", "⏰ Reminder!")
+    minutes = action.get("trigger_minutes")
+    daily_time = action.get("daily_time")
+    recurring = action.get("recurring", False)
+    timezone = action.get("timezone", "Asia/Jakarta")
+    user = message.author
+    channel = message.channel
+    
+    import pytz
+    tz = pytz.timezone(timezone)
+    
+    if minutes:
+        # One-time reminder after X minutes
+        async def _remind_once():
+            await asyncio.sleep(minutes * 60)
+            try:
+                await channel.send(f"⏰ {user.mention} **REMINDER:** {reminder_msg}")
+            except:
+                pass
+        
+        task = asyncio.create_task(_remind_once())
+        reminder_id = f"{user.id}_{datetime.now().timestamp()}"
+        _active_reminders[reminder_id] = task
+        log.info(f"⏰ Reminder set: {minutes}min → {reminder_msg}")
+    
+    elif daily_time:
+        # Daily recurring reminder
+        async def _remind_daily():
+            while True:
+                now = datetime.now(tz)
+                hour, minute = map(int, daily_time.split(":"))
+                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                
+                if target <= now:
+                    target += timedelta(days=1)
+                
+                wait_seconds = (target - now).total_seconds()
+                log.info(f"⏰ Daily reminder scheduled: {daily_time} ({wait_seconds:.0f}s from now)")
+                
+                await asyncio.sleep(wait_seconds)
+                
+                try:
+                    await channel.send(f"⏰ {user.mention} **{reminder_msg}**")
+                except:
+                    pass
+                
+                if not recurring:
+                    break
+                
+                # Wait 61 seconds to avoid double trigger
+                await asyncio.sleep(61)
+        
+        task = asyncio.create_task(_remind_daily())
+        reminder_id = f"{user.id}_{daily_time}_{reminder_msg[:20]}"
+        
+        # Cancel existing reminder with same ID
+        if reminder_id in _active_reminders:
+            _active_reminders[reminder_id].cancel()
+        
+        _active_reminders[reminder_id] = task
+        log.info(f"⏰ Daily reminder set: {daily_time} {'(recurring)' if recurring else '(once)'} → {reminder_msg}")
 
 # ============================================================
 # WAVELINK EVENTS (Music System)
@@ -495,6 +603,16 @@ async def on_message(message: discord.Message):
         settings["user_in_voice"] = False
         settings["user_voice_channel"] = None
 
+        # ── Pass file attachments to handler ──
+    if message.attachments:
+        settings["attachments"] = [
+            {"url": att.url, "filename": att.filename, "size": att.size}
+            for att in message.attachments
+            if att.size < 10_000_000  # Max 10MB per file
+        ]
+    else:
+        settings["attachments"] = []
+
     async with message.channel.typing():
         from core.handler import handle_message
         settings["guild_id"] = message.guild.id
@@ -514,16 +632,20 @@ async def on_message(message: discord.Message):
     else:
         await message.reply(response_text, mention_author=False)
 
-    # ── Execute music actions (if any) ──
-        # ── Execute actions (music, download, image) ──
+    # ── Execute actions (music, download, image, file, reminder) ──
     for action in result.get("actions", []):
         try:
-            if action.get("type") == "music":
+            action_type = action.get("type", "")
+            if action_type == "music":
                 await execute_music_action(message, action)
-            elif action.get("type") == "download":
+            elif action_type == "download":
                 await execute_download_action(message, action)
-            elif action.get("type") == "image":
+            elif action_type == "image":
                 await execute_image_action(message, action)
+            elif action_type == "upload_file":
+                await execute_file_upload_action(message, action)
+            elif action_type == "reminder":
+                await execute_reminder_action(message, action)
         except Exception as e:
             log.error(f"🔧 Action error [{action.get('type')}]: {e}")
 
