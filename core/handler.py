@@ -660,6 +660,31 @@ CALCULATE_TOOL = {
 TRANSLATE_TOOL = {
     "type": "function",
     "function": {
+        "name": "translate",
+        "description": (
+            "Translate text between languages naturally like a native speaker. "
+            "Understands slang, idioms, and cultural context. "
+            "Use when user asks to translate something, or wants to know how to say something in another language."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text to translate"},
+                "target_language": {"type": "string", "description": "Target language, e.g. English, Indonesian, Japanese, Korean, Spanish"},
+                "style": {
+                    "type": "string",
+                    "enum": ["natural", "formal", "casual"],
+                    "description": "Translation style. natural=everyday speech, formal=polished, casual=slang/texting. Default: natural"
+                }
+            },
+            "required": ["text", "target_language"]
+        }
+    }
+}
+
+PLAY_MUSIC_TOOL = {
+    "type": "function",
+    "function": {
         "name": "play_music",
         "description": (
             "Control music playback in Discord voice channel. "
