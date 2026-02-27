@@ -632,6 +632,20 @@ async def on_ready():
         log.error(f"❌ Failed to load music: {e}")
         import traceback
         traceback.print_exc()
+    
+    # Start reminder scheduler
+    try:
+        from core.database import init_reminders_table
+        from core.scheduler import init_scheduler
+        
+        init_reminders_table()
+        scheduler = init_scheduler(bot)
+        await scheduler.start()
+        log.info("⏰ Reminder scheduler started!")
+    except Exception as e:
+        log.error(f"❌ Failed to start scheduler: {e}")
+        import traceback
+        traceback.print_exc()
 
     log.info("=" * 50)
     
@@ -733,6 +747,11 @@ async def on_message(message: discord.Message):
     except Exception as e:
         log.warning(f"Failed to get server info: {e}")
         settings["server_info"] = {}
+
+    # Inject user context for reminder tool
+    settings["_channel_id"] = message.channel.id
+    settings["_user_id"] = message.author.id
+    settings["_user_name"] = message.author.display_name
 
     async with message.channel.typing():
         from core.handler import handle_message
@@ -1176,6 +1195,64 @@ async def weather_cmd(ctx: commands.Context, *, city: str = "Jakarta"):
         await ctx.send(embed=embed)
     else:
         await ctx.send(f"❌ {result['error']}")
+
+
+
+# ============================================================
+# REMINDER COMMANDS
+# ============================================================
+
+@bot.command(name="reminders", aliases=["myreminders", "reminderlist"])
+async def reminders_cmd(ctx: commands.Context):
+    """List all active reminders for user"""
+    from core.database import get_user_reminders
+    
+    reminders = get_user_reminders(ctx.guild.id, ctx.author.id)
+    
+    if not reminders:
+        await ctx.send("📭 Kamu tidak punya reminder aktif.")
+        return
+    
+    embed = discord.Embed(
+        title="⏰ Reminder Aktif",
+        color=discord.Color.orange()
+    )
+    
+    for i, r in enumerate(reminders[:10], 1):
+        next_trigger = r.get("next_trigger", "?")
+        if next_trigger and "T" in str(next_trigger):
+            next_trigger = next_trigger.split("T")[1][:5]
+        
+        trigger_type = r.get("trigger_type", "once")
+        type_emoji = {"daily": "🔄", "weekly": "📅", "once": "1️⃣", "minutes": "⏱️"}.get(trigger_type, "⏰")
+        
+        actions = r.get("actions", [])
+        action_icons = ""
+        for a in actions:
+            if a.get("type") == "dm": action_icons += "📤"
+            elif a.get("type") == "music": action_icons += "🎵"
+            elif a.get("type") == "channel_message": action_icons += "📢"
+        
+        embed.add_field(
+            name=f"{type_emoji} #{r['id']} — {next_trigger}",
+            value=f"{r['message'][:50]} {action_icons}",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Total: {len(reminders)} reminder | !cancelreminder <id> untuk hapus")
+    await ctx.send(embed=embed)
+
+@bot.command(name="cancelreminder", aliases=["delreminder", "rmreminder"])
+async def cancel_reminder_cmd(ctx: commands.Context, reminder_id: int):
+    """Cancel a reminder by ID"""
+    from core.database import delete_reminder
+    
+    success = delete_reminder(reminder_id, ctx.author.id)
+    
+    if success:
+        await ctx.send(f"✅ Reminder #{reminder_id} berhasil dihapus!")
+    else:
+        await ctx.send(f"❌ Reminder #{reminder_id} tidak ditemukan atau bukan milikmu.")
 
 # ============================================================
 # RUN — MUST BE LAST!

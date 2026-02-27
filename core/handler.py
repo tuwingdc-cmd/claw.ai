@@ -931,37 +931,62 @@ SET_REMINDER_TOOL = {
     "function": {
         "name": "set_reminder",
         "description": (
-            "Set a reminder or scheduled notification. "
-            "Use when user wants to be reminded about something at a specific time or after X minutes. "
+            "Set a reminder with optional actions (DM, play music, etc).\n"
+            "Reminder will persist and trigger even after bot restart.\n"
             "\n"
-            "Examples:\n"
-            "• 'Ingatkan aku meeting jam 3' → daily_time='15:00', message='Meeting'\n"
-            "• 'Reminder 30 menit lagi' → minutes=30, message='Reminder'\n"
-            "• 'Set alarm sahur jam 3 pagi' → daily_time='03:00', message='Sahur'\n"
-            "• 'Ingatkan imsak jam 4:15' → daily_time='04:15', message='Imsak'\n"
+            "EXAMPLES:\n"
+            "• 'Ingatkan 10 menit lagi' → trigger_type='minutes', minutes=10\n"
+            "• 'Alarm jam 3 sore' → trigger_type='once', trigger_time='15:00'\n"
+            "• 'Reminder meeting tiap hari jam 9' → trigger_type='daily', trigger_time='09:00'\n"
+            "• 'Ingatkan dengan play musik lofi' → actions=[{type:'music', action:'play', query:'lofi'}]\n"
+            "• 'DM saya reminder meeting' → actions=[{type:'dm', message:'Meeting!'}]\n"
+            "• 'Alarm sahur jam 3, DM dan play Quran' → trigger_time='03:00', actions=[{type:'dm'}, {type:'music', query:'quran recitation'}]\n"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "Reminder message"
+                    "description": "Reminder message content"
+                },
+                "trigger_type": {
+                    "type": "string",
+                    "enum": ["minutes", "once", "daily", "weekly"],
+                    "description": "Type: minutes=after X min, once=one time at specific time, daily=every day, weekly=every week"
                 },
                 "minutes": {
                     "type": "integer",
-                    "description": "Remind after X minutes from now. Use this OR daily_time, not both."
+                    "description": "Minutes from now (for trigger_type='minutes'). Range: 1-10080 (max 7 days)"
                 },
-                "daily_time": {
+                "trigger_time": {
                     "type": "string",
-                    "description": "Time in HH:MM format (24h). For recurring daily reminder. e.g. '03:00' for sahur, '04:15' for imsak"
-                },
-                "recurring": {
-                    "type": "boolean",
-                    "description": "If true, reminder repeats daily at the same time. Default: false"
+                    "description": "Time in HH:MM (24h format). e.g. '15:00' for 3PM, '03:00' for 3AM"
                 },
                 "timezone": {
                     "type": "string",
                     "description": "Timezone. Default: Asia/Jakarta"
+                },
+                "target_user": {
+                    "type": "string",
+                    "description": "Display name of user to remind. If not specified, remind the user who asked. e.g. 'Ys.', 'Liffy', 'DemisDc'"
+                },
+                "actions": {
+                    "type": "array",
+                    "description": "Additional actions when reminder triggers",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["dm", "music", "channel_message"],
+                                "description": "dm=DM user, music=play music, channel_message=send to another channel"
+                            },
+                            "message": {"type": "string", "description": "Custom message for dm/channel_message"},
+                            "action": {"type": "string", "description": "For music: 'play'"},
+                            "query": {"type": "string", "description": "For music: search query"},
+                            "channel": {"type": "string", "description": "For channel_message: channel name"}
+                        }
+                    }
                 }
             },
             "required": ["message"]
@@ -1186,45 +1211,97 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
 
         # ── SET REMINDER ──
     elif tool_name == "set_reminder":
-        message = tool_args.get("message", "Reminder!")
-        minutes = tool_args.get("minutes")
-        daily_time = tool_args.get("daily_time")
-        recurring = tool_args.get("recurring", False)
-        timezone = tool_args.get("timezone", "Asia/Jakarta")
-        log.info(f"⏰ Tool: set_reminder(msg={message}, min={minutes}, time={daily_time})")
+        from core.database import create_reminder
         
-        import pytz
-        tz = pytz.timezone(timezone)
+        message = tool_args.get("message", "Reminder!")
+        trigger_type = tool_args.get("trigger_type", "minutes")
+        minutes = tool_args.get("minutes")
+        trigger_time = tool_args.get("trigger_time")
+        timezone = tool_args.get("timezone", "Asia/Jakarta")
+        actions = tool_args.get("actions", [])
+        
+        # Get context
+        guild_id = tool_args.get("_guild_id", 0)
+        channel_id = tool_args.get("_channel_id", 0)
+        user_id = tool_args.get("_user_id", 0)
+        user_name = tool_args.get("_user_name", "User")
+        
+        # Auto-detect trigger_type
+        if minutes and trigger_type == "minutes":
+            pass
+        elif trigger_time and trigger_type == "minutes":
+            trigger_type = "once"
+        elif not minutes and not trigger_time:
+            minutes = 5
+            trigger_type = "minutes"
+        
+        log.info(f"⏰ Tool: set_reminder(type={trigger_type}, msg={message[:30]}, actions={len(actions)})")
+        
+        try:
+            import pytz
+            tz = pytz.timezone(timezone)
+        except:
+            import pytz
+            tz = pytz.timezone("Asia/Jakarta")
+            timezone = "Asia/Jakarta"
+        
         now = datetime.now(tz)
         
-        if minutes:
-            trigger = now + timedelta(minutes=minutes)
-            return json.dumps({
-                "type": "reminder",
-                "message": message,
-                "trigger_minutes": minutes,
-                "trigger_time": trigger.strftime("%H:%M:%S"),
-                "recurring": False,
-                "timezone": timezone,
-            })
-        elif daily_time:
-            return json.dumps({
-                "type": "reminder",
-                "message": message,
-                "daily_time": daily_time,
-                "recurring": recurring,
-                "timezone": timezone,
-                "trigger_time": daily_time,
-            })
+        # Resolve target user
+        target_user_name = tool_args.get("target_user", "")
+        target_user_id = None
+        
+        # Try to find target user ID from server info
+        if target_user_name:
+            server_info = tool_args.get("_server_info", {})
+            all_members = server_info.get("all_members", [])
+            log.info(f"⏰ Looking for target user: '{target_user_name}' in {len(all_members)} members")
+        
+        # Create reminder in database (persistent!)
+        reminder_id = create_reminder(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+            user_name=user_name,
+            message=message,
+            trigger_type=trigger_type,
+            trigger_time=trigger_time,
+            trigger_minutes=minutes,
+            timezone=timezone,
+            actions=actions,
+            target_user_id=target_user_id,
+            target_user_name=target_user_name if target_user_name else None
+        )
+        
+        # Calculate display time
+        if trigger_type == "minutes" and minutes:
+            from datetime import timedelta
+            trigger_display = (now + timedelta(minutes=minutes)).strftime("%H:%M:%S")
+            type_display = f"{minutes} menit dari sekarang"
+        elif trigger_time:
+            trigger_display = trigger_time
+            type_display = {"once": "sekali", "daily": "setiap hari", "weekly": "setiap minggu"}.get(trigger_type, trigger_type)
         else:
-            return json.dumps({
-                "type": "reminder",
-                "message": message,
-                "trigger_minutes": 5,
-                "trigger_time": (now + timedelta(minutes=5)).strftime("%H:%M:%S"),
-                "recurring": False,
-                "timezone": timezone,
-            })
+            trigger_display = "soon"
+            type_display = trigger_type
+        
+        # Build action descriptions
+        action_descs = []
+        for a in actions:
+            if a.get("type") == "dm":
+                action_descs.append("📤 DM")
+            elif a.get("type") == "music":
+                action_descs.append(f"🎵 Play: {a.get('query', 'music')[:20]}")
+            elif a.get("type") == "channel_message":
+                action_descs.append(f"📢 #{a.get('channel', '?')}")
+        
+        actions_text = ", ".join(action_descs) if action_descs else "📢 mention di channel"
+        
+        return f"✅ Reminder #{reminder_id} berhasil dibuat!\n" \
+               f"📝 Pesan: {message}\n" \
+               f"⏰ Waktu: {trigger_display} ({type_display})\n" \
+               f"🔔 Aksi: {actions_text}\n" \
+               f"🌏 Timezone: {timezone}"
 
     # ══════════════════════════════════════════
     # TARUH DI SINI ↓↓↓
@@ -1735,6 +1812,15 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             # Inject server info for get_server_info tool
             if fn_name == "get_server_info" and settings:
                 fn_args["_server_info"] = settings.get("server_info", {})
+            
+            # Inject context for set_reminder tool
+            if fn_name == "set_reminder" and settings:
+                fn_args["_guild_id"] = settings.get("guild_id", 0)
+                fn_args["_channel_id"] = settings.get("_channel_id", 0)
+                fn_args["_user_id"] = settings.get("_user_id", 0)
+                fn_args["_user_name"] = settings.get("_user_name", "User")
+                fn_args["_server_info"] = settings.get("server_info", {})
+            
             tool_result = await execute_tool_call(fn_name, fn_args)
 
             # Updated action parser
