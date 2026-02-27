@@ -9,8 +9,9 @@ import asyncio
 import aiohttp
 import os
 import tempfile
+import shutil
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from core.providers import ProviderFactory, AIResponse
 from core.database import (
     save_message, get_conversation, clear_conversation,
@@ -435,7 +436,7 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
-                "format": "best[height<=720][ext=mp4]/best[height<=720]/best[ext=mp4]/best",
+                "format": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/best[height<=1440][ext=mp4]/best[ext=mp4]/best",
                 "outtmpl": output_path,
                 "merge_output_format": "mp4",
                 "socket_timeout": 30,
@@ -754,9 +755,104 @@ GENERATE_IMAGE_TOOL = {
     }
 }
 
+CREATE_DOCUMENT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "create_document",
+        "description": (
+            "Create office documents or code files and send to user. "
+            "\n\n"
+            "SUPPORTED FILE TYPES:\n"
+            "• Word (.docx) — letters, reports, formal documents\n"
+            "• Excel (.xlsx) — tables, data, spreadsheets, schedules\n"
+            "• Code files (.py, .js, .html, .css, .json, .sql, etc)\n"
+            "• Text files (.txt, .md, .csv)\n"
+            "\n"
+            "IMPORTANT FOR EXCEL:\n"
+            "You MUST provide content as JSON array of arrays. "
+            "First row is header. Example:\n"
+            '[[\"Name\",\"Age\",\"City\"],[\"John\",25,\"NYC\"],[\"Jane\",30,\"LA\"]]'
+            "\n\n"
+            "IMPORTANT FOR WORD:\n"
+            "Use markdown-like formatting:\n"
+            "# Heading 1, ## Heading 2, ### Heading 3\n"
+            "- bullet point, 1. numbered list\n"
+            "Regular text as paragraphs."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_type": {
+                    "type": "string",
+                    "enum": ["docx", "xlsx", "py", "js", "html", "css", "json", "txt", "md", "sql", "csv", "java", "cpp", "sh"],
+                    "description": "File type to create"
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Output filename with extension, e.g. 'report.docx', 'data.xlsx', 'script.py'"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Document title (for Word/Excel). Optional."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "File content. For Excel: JSON array of arrays. For Word: markdown-formatted text. For code: raw code."
+                }
+            },
+            "required": ["file_type", "filename", "content"]
+        }
+    }
+}
+
+SET_REMINDER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "set_reminder",
+        "description": (
+            "Set a reminder or scheduled notification. "
+            "Use when user wants to be reminded about something at a specific time or after X minutes. "
+            "\n"
+            "Examples:\n"
+            "• 'Ingatkan aku meeting jam 3' → daily_time='15:00', message='Meeting'\n"
+            "• 'Reminder 30 menit lagi' → minutes=30, message='Reminder'\n"
+            "• 'Set alarm sahur jam 3 pagi' → daily_time='03:00', message='Sahur'\n"
+            "• 'Ingatkan imsak jam 4:15' → daily_time='04:15', message='Imsak'\n"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Reminder message"
+                },
+                "minutes": {
+                    "type": "integer",
+                    "description": "Remind after X minutes from now. Use this OR daily_time, not both."
+                },
+                "daily_time": {
+                    "type": "string",
+                    "description": "Time in HH:MM format (24h). For recurring daily reminder. e.g. '03:00' for sahur, '04:15' for imsak"
+                },
+                "recurring": {
+                    "type": "boolean",
+                    "description": "If true, reminder repeats daily at the same time. Default: false"
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "Timezone. Default: Asia/Jakarta"
+                }
+            },
+            "required": ["message"]
+        }
+    }
+}
+
+
 TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL,
-    TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, GENERATE_IMAGE_TOOL
+    TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, GENERATE_IMAGE_TOOL,
+    CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL
 ]
 
 
@@ -892,8 +988,333 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             "prompt": prompt,
             "size": size,
         })
+        
+            # ── CREATE DOCUMENT ──
+    elif tool_name == "create_document":
+        file_type = tool_args.get("file_type", "txt")
+        filename = tool_args.get("filename", f"document.{file_type}")
+        title = tool_args.get("title", "")
+        content = tool_args.get("content", "")
+        log.info(f"📄 Tool: create_document({filename})")
+        
+        result = await create_document(file_type, filename, content, title)
+        if result:
+            return json.dumps(result)
+        return f"Failed to create {filename}"
 
+    # ── SET REMINDER ──
+    elif tool_name == "set_reminder":
+        message = tool_args.get("message", "Reminder!")
+        minutes = tool_args.get("minutes")
+        daily_time = tool_args.get("daily_time")
+        recurring = tool_args.get("recurring", False)
+        timezone = tool_args.get("timezone", "Asia/Jakarta")
+        log.info(f"⏰ Tool: set_reminder(msg={message}, min={minutes}, time={daily_time})")
+        
+        import pytz
+        tz = pytz.timezone(timezone)
+        now = datetime.now(tz)
+        
+        if minutes:
+            trigger = now + timedelta(minutes=minutes)
+            return json.dumps({
+                "type": "reminder",
+                "message": message,
+                "trigger_minutes": minutes,
+                "trigger_time": trigger.strftime("%H:%M:%S"),
+                "recurring": False,
+                "timezone": timezone,
+            })
+        elif daily_time:
+            return json.dumps({
+                "type": "reminder",
+                "message": message,
+                "daily_time": daily_time,
+                "recurring": recurring,
+                "timezone": timezone,
+                "trigger_time": daily_time,
+            })
+        else:
+            # Default: 5 minutes
+            return json.dumps({
+                "type": "reminder",
+                "message": message,
+                "trigger_minutes": 5,
+                "trigger_time": (now + timedelta(minutes=5)).strftime("%H:%M:%S"),
+                "recurring": False,
+                "timezone": timezone,
+            })
+        
     return f"Unknown tool: {tool_name}"
+
+
+# ============================================================
+# FILE READER — Read uploaded files
+# ============================================================
+
+async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
+    """Download and read content from Discord attachment"""
+    try:
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.read()
+        
+        # ── TEXT / CODE FILES ──
+        text_extensions = {
+            "py", "js", "ts", "html", "css", "json", "xml", "yaml", "yml",
+            "txt", "md", "csv", "log", "env", "ini", "cfg", "conf",
+            "sh", "bash", "bat", "ps1", "sql", "r", "rb", "php",
+            "java", "kt", "swift", "go", "rs", "c", "cpp", "h", "hpp",
+            "vue", "svelte", "jsx", "tsx", "dart", "lua", "toml",
+        }
+        
+        if ext in text_extensions:
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                text = data.decode("latin-1")
+            
+            if len(text) > 15000:
+                text = text[:15000] + "\n\n[... file trimmed, too long ...]"
+            
+            log.info(f"📄 Read text file: {filename} ({len(text)} chars)")
+            return f"[File: {filename}]\n```{ext}\n{text}\n```"
+        
+        # ── PDF ──
+        elif ext == "pdf":
+            try:
+                from pypdf import PdfReader
+                import io
+                reader = PdfReader(io.BytesIO(data))
+                pages = []
+                for i, page in enumerate(reader.pages[:20]):  # Max 20 pages
+                    text = page.extract_text()
+                    if text:
+                        pages.append(f"--- Page {i+1} ---\n{text}")
+                
+                full_text = "\n\n".join(pages)
+                if len(full_text) > 15000:
+                    full_text = full_text[:15000] + "\n\n[... PDF trimmed ...]"
+                
+                log.info(f"📄 Read PDF: {filename} ({len(reader.pages)} pages)")
+                return f"[PDF: {filename} — {len(reader.pages)} pages]\n{full_text}"
+            except ImportError:
+                return f"[PDF: {filename}] — pypdf not installed, cannot read PDF"
+            except Exception as e:
+                return f"[PDF: {filename}] — Error reading: {e}"
+        
+        # ── DOCX ──
+        elif ext == "docx":
+            try:
+                from docx import Document
+                import io
+                doc = Document(io.BytesIO(data))
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                full_text = "\n".join(paragraphs)
+                
+                if len(full_text) > 15000:
+                    full_text = full_text[:15000] + "\n\n[... document trimmed ...]"
+                
+                log.info(f"📄 Read DOCX: {filename} ({len(paragraphs)} paragraphs)")
+                return f"[Word Document: {filename}]\n{full_text}"
+            except ImportError:
+                return f"[DOCX: {filename}] — python-docx not installed"
+            except Exception as e:
+                return f"[DOCX: {filename}] — Error reading: {e}"
+        
+        # ── XLSX ──
+        elif ext in ("xlsx", "xls"):
+            try:
+                from openpyxl import load_workbook
+                import io
+                wb = load_workbook(io.BytesIO(data), read_only=True)
+                sheets_text = []
+                
+                for sheet_name in wb.sheetnames[:5]:  # Max 5 sheets
+                    ws = wb[sheet_name]
+                    rows = []
+                    for row in ws.iter_rows(max_row=100, values_only=True):  # Max 100 rows
+                        row_data = [str(cell) if cell is not None else "" for cell in row]
+                        rows.append(" | ".join(row_data))
+                    
+                    if rows:
+                        sheets_text.append(f"[Sheet: {sheet_name}]\n" + "\n".join(rows))
+                
+                full_text = "\n\n".join(sheets_text)
+                if len(full_text) > 15000:
+                    full_text = full_text[:15000] + "\n\n[... spreadsheet trimmed ...]"
+                
+                log.info(f"📄 Read XLSX: {filename} ({len(wb.sheetnames)} sheets)")
+                return f"[Excel: {filename}]\n{full_text}"
+            except ImportError:
+                return f"[XLSX: {filename}] — openpyxl not installed"
+            except Exception as e:
+                return f"[XLSX: {filename}] — Error reading: {e}"
+        
+        else:
+            return f"[File: {filename}] — Unsupported file type: .{ext}"
+    
+    except Exception as e:
+        log.error(f"📄 File read error: {e}")
+        return f"[File: {filename}] — Error: {e}"
+
+
+# ============================================================
+# FILE CREATOR — Generate office documents
+# ============================================================
+
+async def create_document(file_type: str, filename: str, content: str, title: str = "") -> Optional[dict]:
+    """Create Word, Excel, or Code file"""
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # ── WORD (.docx) ──
+        if file_type == "docx":
+            from docx import Document
+            from docx.shared import Pt, Inches
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            
+            doc = Document()
+            
+            if title:
+                heading = doc.add_heading(title, level=1)
+                heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Parse content — support basic formatting
+            lines = content.split("\n")
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    doc.add_paragraph("")
+                elif line.startswith("# "):
+                    doc.add_heading(line[2:], level=1)
+                elif line.startswith("## "):
+                    doc.add_heading(line[3:], level=2)
+                elif line.startswith("### "):
+                    doc.add_heading(line[4:], level=3)
+                elif line.startswith("- ") or line.startswith("• "):
+                    doc.add_paragraph(line[2:], style="List Bullet")
+                elif re.match(r'^\d+\.\s', line):
+                    doc.add_paragraph(re.sub(r'^\d+\.\s', '', line), style="List Number")
+                else:
+                    doc.add_paragraph(line)
+            
+            filepath = os.path.join(temp_dir, filename)
+            doc.save(filepath)
+            log.info(f"📄 Created DOCX: {filename}")
+            
+            return {
+                "type": "upload_file",
+                "local_path": filepath,
+                "temp_dir": temp_dir,
+                "filename": filename,
+            }
+        
+        # ── EXCEL (.xlsx) ──
+        elif file_type == "xlsx":
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = title or "Sheet1"
+            
+            # Parse content as JSON array of arrays
+            try:
+                rows_data = json.loads(content)
+                if not isinstance(rows_data, list):
+                    rows_data = [[content]]
+            except (json.JSONDecodeError, TypeError):
+                # Fallback: parse as text table
+                rows_data = []
+                for line in content.strip().split("\n"):
+                    if line.strip():
+                        # Split by | or , or tab
+                        if "|" in line:
+                            cells = [c.strip() for c in line.split("|") if c.strip()]
+                        elif "\t" in line:
+                            cells = [c.strip() for c in line.split("\t")]
+                        elif "," in line:
+                            cells = [c.strip() for c in line.split(",")]
+                        else:
+                            cells = [line.strip()]
+                        rows_data.append(cells)
+            
+            # Write data to worksheet
+            for row_idx, row in enumerate(rows_data, 1):
+                for col_idx, value in enumerate(row, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    
+                    # Style header row (first row)
+                    if row_idx == 1:
+                        cell.font = Font(bold=True, color="FFFFFF", size=11)
+                        cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.alignment = Alignment(vertical="center")
+                    
+                    # Add border
+                    thin_border = Border(
+                        left=Side(style="thin"),
+                        right=Side(style="thin"),
+                        top=Side(style="thin"),
+                        bottom=Side(style="thin"),
+                    )
+                    cell.border = thin_border
+            
+            # Auto-adjust column width
+            for col in ws.columns:
+                max_length = 0
+                col_letter = col[0].column_letter
+                for cell in col:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                ws.column_dimensions[col_letter].width = min(max_length + 4, 50)
+            
+            filepath = os.path.join(temp_dir, filename)
+            wb.save(filepath)
+            log.info(f"📊 Created XLSX: {filename}")
+            
+            return {
+                "type": "upload_file",
+                "local_path": filepath,
+                "temp_dir": temp_dir,
+                "filename": filename,
+            }
+        
+        # ── CODE / TEXT FILES ──
+        elif file_type in ("py", "js", "ts", "html", "css", "json", "txt", "md", 
+                           "sql", "sh", "yaml", "xml", "csv", "java", "cpp", "c",
+                           "go", "rs", "rb", "php", "swift", "kt", "dart", "lua"):
+            filepath = os.path.join(temp_dir, filename)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            
+            log.info(f"💻 Created code file: {filename}")
+            
+            return {
+                "type": "upload_file",
+                "local_path": filepath,
+                "temp_dir": temp_dir,
+                "filename": filename,
+            }
+        
+        else:
+            log.warning(f"Unsupported file type: {file_type}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None
+    
+    except Exception as e:
+        log.error(f"📄 Create document error: {e}")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return None
 
 
 # ============================================================
@@ -937,42 +1358,54 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
         })
 
         for tc in tool_calls:
-            fn_name = tc.get("function", {}).get("name", "")
-            fn_args_str = tc.get("function", {}).get("arguments", "{}")
-            tool_call_id = tc.get("id", f"call_{round_num}")
+    fn_name = tc.get("function", {}).get("name", "")
+    fn_args_str = tc.get("function", {}).get("arguments", "{}")
+    tool_call_id = tc.get("id", f"call_{round_num}")
 
-            try:
-                fn_args = json.loads(fn_args_str)
-            except (json.JSONDecodeError, TypeError):
-                fn_args = {"query": fn_args_str}
+    try:
+        fn_args = json.loads(fn_args_str)
+    except (json.JSONDecodeError, TypeError):
+        fn_args = {"query": fn_args_str}
 
-            # Capture actions
-            if fn_name == "play_music":
-                pending_actions.append({
-                    "type": "music",
-                    "action": fn_args.get("action", "play"),
-                    "query": fn_args.get("query", ""),
-                })
+    # Capture music action manually
+    if fn_name == "play_music":
+        pending_actions.append({
+            "type": "music",
+            "action": fn_args.get("action", "play"),
+            "query": fn_args.get("query", ""),
+        })
 
-            tool_result = await execute_tool_call(fn_name, fn_args)
+    tool_result = await execute_tool_call(fn_name, fn_args)
 
-            try:
-                result_data = json.loads(tool_result)
-                if isinstance(result_data, dict) and result_data.get("type") == "download":
-                    pending_actions.append(result_data)
-                elif isinstance(result_data, dict) and result_data.get("type") == "image":
-                    pending_actions.append(result_data)
-            except (json.JSONDecodeError, TypeError):
-                pass
+    # ✅ Updated action parser
+    try:
+        result_data = json.loads(tool_result)
+        if isinstance(result_data, dict):
+            action_type = result_data.get("type")
+            
+            if action_type == "download":
+                pending_actions.append(result_data)
+            
+            elif action_type == "image":
+                pending_actions.append(result_data)
+            
+            elif action_type == "upload_file":
+                pending_actions.append(result_data)
+            
+            elif action_type == "reminder":
+                pending_actions.append(result_data)
 
-            log.info(f"✅ Round {round_num + 1}: {fn_name}")
-            tools_used.append(fn_name)
+    except (json.JSONDecodeError, TypeError):
+        pass
 
-            current_messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
-            })
+    log.info(f"✅ Round {round_num + 1}: {fn_name}")
+    tools_used.append(fn_name)
+
+    current_messages.append({
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
+    })
 
         # ── FIX: Round 2+ tanpa tools agar model jawab langsung ──
         resp = await prov.chat(current_messages, model)  # Tanpa tools
@@ -1039,21 +1472,31 @@ You can see who is talking by their name in [brackets].
 Multiple users may be chatting — address them by name when appropriate.
 Remember full conversation context. Respond in user's language. Be concise and friendly.
 
-When you receive tool results (such as web search, weather, time, or translation results), 
-use that information naturally in your answer.
-Do NOT list sources, URLs, or citations. Do NOT use numbered references like [1][2][3].
+When you receive tool results, use that information naturally in your answer.
+Do NOT list sources, URLs, or citations. Do NOT use numbered references.
 Just answer naturally as if you already knew the information.
 Never say "I cannot access real-time data" when tool results are provided.
 
 IMPORTANT — URL HANDLING:
 When a user shares ANY URL/link (https://...), you MUST use the fetch_url tool to read it.
 NEVER say "I cannot access the link" — always try fetch_url first.
-This works for: news articles, tweets, YouTube, TikTok, Instagram, GitHub, blogs, any website.
+
+IMPORTANT — FILE HANDLING:
+When a user uploads a file, the file content is included in their message.
+Read the content and help them with whatever they ask (explain, review, fix, etc).
+You can also CREATE files: Word (.docx), Excel (.xlsx), code files (.py, .js, etc).
+
+IMPORTANT — EXCEL FORMAT:
+When creating Excel files, you MUST provide content as JSON array of arrays.
+First row = headers. Example: [["Name","Age"],["John",25],["Jane",30]]
+
+IMPORTANT — WORD FORMAT:
+Use markdown formatting: # Heading, ## Subheading, - bullets, 1. numbered lists.
 
 For music: you can play, skip, pause, resume, and stop music.
 If user is NOT in a voice channel, tell them to join one first.
 
-For images: you can generate images from text descriptions.""",
+For reminders: you can set one-time or recurring daily reminders.""",
 
     "reasoning": """You are a reasoning AI. Think step by step.
 Multiple users may ask questions — keep track of who asked what.
@@ -1080,6 +1523,23 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     guild_id = settings.get("guild_id", 0)
 
     history = get_conversation(guild_id, channel_id, limit=30)
+
+    # =========================================================
+    # STEP 0: Read file attachments (if any)
+    # =========================================================
+    
+    file_context = ""
+    attachments_data = settings.get("attachments", [])
+    
+    if attachments_data:
+        for att in attachments_data[:3]:  # Max 3 files
+            file_content = await read_uploaded_file(att["url"], att["filename"])
+            if file_content:
+                file_context += f"\n\n{file_content}"
+        
+        if file_context:
+            content = content + file_context
+            log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
 
     # =========================================================
     # STEP 1: Try smart skills (time, weather, calendar)
