@@ -1675,23 +1675,22 @@ Respond in the same language as the user.""",
 }
 
 # ============================================================
-# VISION — Process images with AI
+# VISION — Process images with AI (Dynamic from settings)
 # ============================================================
 
 async def process_with_vision(content: str, image_urls: list, settings: dict) -> Optional[str]:
-    """Process message with image using vision-capable models"""
+    """Process message with image using the model from settings"""
     
-    # Vision-capable providers & models
-    VISION_MODELS = [
-        ("groq", "llama-3.2-90b-vision-preview"),
-        ("groq", "llama-3.2-11b-vision-preview"),
-        ("openrouter", "google/gemini-flash-1.5"),
-        ("openrouter", "anthropic/claude-3-haiku"),
-        ("gemini", "gemini-1.5-flash"),
-        ("pollinations", "gpt-4o-mini"),
-    ]
+    # Get provider & model from user settings
+    mode = settings.get("active_mode", "normal")
+    profile = settings.get("profiles", {}).get(mode, {})
     
-    # Build message with images
+    prov_name = profile.get("provider", "pollinations")
+    model_id = profile.get("model", "openai")
+    
+    log.info(f"👁️ Vision using settings: {prov_name}/{model_id}")
+    
+    # Build message with images (OpenAI vision format)
     user_content = [{"type": "text", "text": content or "Describe this image / Jelaskan gambar ini"}]
     
     for url in image_urls[:3]:  # Max 3 images
@@ -1708,23 +1707,51 @@ async def process_with_vision(content: str, image_urls: list, settings: dict) ->
         {"role": "user", "content": user_content}
     ]
     
-    for prov_name, model_id in VISION_MODELS:
-        prov = ProviderFactory.get(prov_name, API_KEYS)
-        if not prov:
+    # Try with user's selected provider/model first
+    prov = ProviderFactory.get(prov_name, API_KEYS)
+    if prov:
+        try:
+            if await prov.health_check():
+                log.info(f"👁️ Trying vision: {prov_name}/{model_id}")
+                resp = await prov.chat(messages, model_id)
+                
+                if resp.success and resp.content:
+                    log.info(f"👁️ Vision success via {prov_name}/{model_id}")
+                    return resp.content
+                else:
+                    log.warning(f"👁️ Vision failed {prov_name}/{model_id}: {resp.error}")
+        except Exception as e:
+            log.warning(f"👁️ Vision error {prov_name}: {e}")
+    
+    # Fallback: try other vision-capable providers
+    VISION_FALLBACKS = [
+        ("pollinations", "openai"),        # GPT-5 Mini - supports vision
+        ("pollinations", "gemini"),        # Gemini 2.5 Pro
+        ("gemini", "gemini-2.0-flash"),    # Direct Gemini
+        ("groq", "llama-4-scout-17b-16e-instruct"),  # Llama 4 Scout
+    ]
+    
+    for fb_prov, fb_model in VISION_FALLBACKS:
+        # Skip if same as already tried
+        if fb_prov == prov_name and fb_model == model_id:
+            continue
+        
+        fb_provider = ProviderFactory.get(fb_prov, API_KEYS)
+        if not fb_provider:
             continue
         
         try:
-            if not await prov.health_check():
+            if not await fb_provider.health_check():
                 continue
-                
-            log.info(f"👁️ Trying vision: {prov_name}/{model_id}")
-            resp = await prov.chat(messages, model_id)
+            
+            log.info(f"👁️ Fallback vision: {fb_prov}/{fb_model}")
+            resp = await fb_provider.chat(messages, fb_model)
             
             if resp.success and resp.content:
-                log.info(f"👁️ Vision success via {prov_name}/{model_id}")
+                log.info(f"👁️ Vision success via fallback {fb_prov}/{fb_model}")
                 return resp.content
         except Exception as e:
-            log.warning(f"👁️ Vision error {prov_name}: {e}")
+            log.warning(f"👁️ Fallback error {fb_prov}: {e}")
             continue
     
     return None
