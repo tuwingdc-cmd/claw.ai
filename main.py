@@ -3,7 +3,7 @@ Discord AI Bot - Entry Point
 Multi-provider AI with fallback system
 Settings persist via SQLite!
 """
-
+from typing import Dict, Optional
 import aiohttp
 import tempfile
 import os
