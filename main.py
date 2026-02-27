@@ -486,11 +486,34 @@ async def execute_send_message_action(message, action):
     destination = action.get("destination", "dm")
     channel_name = action.get("channel_name", "")
     msg_content = action.get("message", "")
+    target_user_name = action.get("target_user", "")
     try:
         if destination == "dm":
-            dm_channel = await message.author.create_dm()
+            # Find target user
+            target = None
+            if target_user_name:
+                # Search by display name or username
+                guild = message.guild
+                for m in guild.members:
+                    if (m.display_name.lower() == target_user_name.lower() or
+                        m.name.lower() == target_user_name.lower()):
+                        target = m
+                        break
+                # Partial match
+                if not target:
+                    for m in guild.members:
+                        if (target_user_name.lower() in m.display_name.lower() or
+                            target_user_name.lower() in m.name.lower()):
+                            target = m
+                            break
+            
+            if not target:
+                target = message.author  # Default: DM sender
+            
+            dm_channel = await target.create_dm()
             await dm_channel.send(msg_content or "📬 Pesan dari bot!")
-            log.info(f"📤 DM sent to {message.author.name}")
+            log.info(f"📤 DM sent to {target.display_name}")
+            
         elif destination == "channel" and channel_name:
             target_channel = discord.utils.get(message.guild.text_channels, name=channel_name)
             if target_channel:
@@ -499,7 +522,8 @@ async def execute_send_message_action(message, action):
             else:
                 await message.channel.send(f"❌ Channel #{channel_name} tidak ditemukan.")
     except discord.Forbidden:
-        await message.channel.send("❌ Tidak bisa kirim DM. Pastikan DM kamu terbuka.")
+        user_name = target_user_name or "user"
+        await message.channel.send(f"❌ Tidak bisa kirim DM ke {user_name}. DM mungkin tertutup.")
     except Exception as e:
         log.error(f"📤 Send message error: {e}")
 

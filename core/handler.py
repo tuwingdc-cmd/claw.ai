@@ -986,6 +986,10 @@ SEND_MESSAGE_TOOL = {
                     "enum": ["dm", "channel"],
                     "description": "Where to send: 'dm' for Direct Message, 'channel' for another channel"
                 },
+                "target_user": {
+                    "type": "string",
+                    "description": "Display name of the user to DM. If not specified, DM the user who asked. e.g. 'Ys.', 'Liffy', 'DemisDc'"
+                },
                 "channel_name": {
                     "type": "string",
                     "description": "Channel name (without #) if destination is 'channel'. e.g. 'general', 'bot-spam'"
@@ -1231,14 +1235,16 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         destination = tool_args.get("destination", "dm")
         channel_name = tool_args.get("channel_name", "")
         msg_content = tool_args.get("message", "")
+        target_user = tool_args.get("target_user", "")
         
-        log.info(f"📤 Tool: send_message(dest={destination}, channel={channel_name})")
+        log.info(f"📤 Tool: send_message(dest={destination}, target={target_user}, channel={channel_name})")
         
         return json.dumps({
             "type": "send_message",
             "destination": destination,
             "channel_name": channel_name,
             "message": msg_content,
+            "target_user": target_user,
         })
 
     # ══════════════════════════════════════════
