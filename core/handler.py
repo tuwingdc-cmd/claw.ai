@@ -1717,6 +1717,9 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                     "query": fn_args.get("query", ""),
                 })
 
+            # Inject server info for get_server_info tool
+            if fn_name == "get_server_info" and settings:
+                fn_args["_server_info"] = settings.get("server_info", {})
             tool_result = await execute_tool_call(fn_name, fn_args)
 
             # Updated action parser
