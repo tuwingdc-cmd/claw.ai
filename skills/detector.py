@@ -1,5 +1,7 @@
 """
 Smart Skill Detector - Auto-detect and execute skills from natural language
+Only handles: time, calendar, countdown
+Weather → handled by AI tool calling (more accurate city extraction)
 """
 
 import re
@@ -9,7 +11,6 @@ from typing import Optional, Dict
 
 from skills.time_skill import get_current_time, get_time_difference
 from skills.calendar_skill import get_calendar, days_until
-from skills.weather_skill import get_weather
 
 # ============================================================
 # TIMEZONE ALIASES
@@ -73,20 +74,21 @@ class SkillDetector:
     @classmethod
     async def detect_and_execute(cls, content: str) -> Optional[str]:
         lower = content.lower().strip()
-        
-        # Check each skill
+
+        # Only handle: time, calendar, countdown
+        # Weather is handled by AI tool calling for better city extraction
         result = cls._check_time(lower)
-        if result: return result
-        
+        if result:
+            return result
+
         result = cls._check_calendar(lower)
-        if result: return result
-        
+        if result:
+            return result
+
         result = cls._check_countdown(lower)
-        if result: return result
-        
-        result = await cls._check_weather(lower)
-        if result: return result
-        
+        if result:
+            return result
+
         return None  # No skill matched
 
     # ============================================================
@@ -107,17 +109,17 @@ class SkillDetector:
             r'sekarang jam',
             r'what.s the time',
         ]
-        
+
         if not any(re.search(p, text) for p in time_patterns):
             return None
-        
+
         # Find timezone
         tz = "Asia/Jakarta"  # default
         for alias, tzname in TZ_ALIASES.items():
             if alias in text:
                 tz = tzname
                 break
-        
+
         result = get_current_time(tz)
         if result["success"]:
             return f"🕐 **{result['full']}**"
@@ -138,38 +140,34 @@ class SkillDetector:
             r'buka kalender',
             r'kalender\s+\w+',
         ]
-        
+
         if not any(re.search(p, text) for p in cal_patterns):
             return None
-        
-        # Detect month
+
         month = None
         year = None
-        
+
         for name, num in MONTH_NAMES.items():
             if name in text:
                 month = num
                 break
-        
-        # Detect year
+
         year_match = re.search(r'(20\d{2})', text)
         if year_match:
             year = int(year_match.group(1))
-        
-        # "bulan ini" / "this month"
+
         if "bulan ini" in text or "this month" in text:
             now = datetime.datetime.now()
             month = now.month
             year = now.year
-        
-        # "bulan depan" / "next month"
+
         if "bulan depan" in text or "next month" in text:
             now = datetime.datetime.now()
             if now.month == 12:
                 month, year = 1, now.year + 1
             else:
                 month, year = now.month + 1, now.year
-        
+
         result = get_calendar(year, month)
         if result["success"]:
             return f"📅 **{result['month_name']} {result['year']}**\n{result['calendar_text']}"
@@ -189,11 +187,10 @@ class SkillDetector:
             r'days until',
             r'kapan .+ (lebaran|natal|tahun baru|imlek|valentine|halloween)',
         ]
-        
+
         if not any(re.search(p, text) for p in cd_patterns):
             return None
-        
-        # Try to find date
+
         date_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', text)
         if date_match:
             target = date_match.group(0)
@@ -205,8 +202,7 @@ class SkillDetector:
                     return f"📅 {target} sudah lewat **{abs(result['days_remaining'])}** hari lalu"
                 else:
                     return f"⏳ **{result['days_remaining']} hari** lagi menuju {target}"
-        
-        # Known events
+
         now = datetime.datetime.now()
         year = now.year
         events = {
@@ -218,62 +214,11 @@ class SkillDetector:
             "halloween": f"{year}-10-31" if now.month < 10 or (now.month == 10 and now.day < 31) else f"{year+1}-10-31",
             "kemerdekaan": f"{year}-08-17" if now.month < 8 or (now.month == 8 and now.day < 17) else f"{year+1}-08-17",
         }
-        
+
         for event, date in events.items():
             if event in text:
                 result = days_until(date)
                 if result and result["success"]:
                     return f"⏳ **{result['days_remaining']} hari** lagi menuju {event.title()} ({date})"
-        
-        return None
 
-    # ============================================================
-    # WEATHER DETECTION
-    # ============================================================
-
-    @classmethod
-    async def _check_weather(cls, text: str) -> Optional[str]:
-        weather_patterns = [
-            r'cuaca di (.+)',
-            r'cuaca (.+)',
-            r'weather in (.+)',
-            r'weather (.+)',
-            r'cuaca hari ini',
-            r'gimana cuaca',
-            r'how.s the weather',
-            r'bagaimana cuaca',
-        ]
-        
-        city = None
-        for pattern in weather_patterns:
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    city = match.group(1).strip().rstrip('?!.')
-                except:
-                    city = "Jakarta"
-                break
-        
-        if not city:
-            # Check if just asking about weather without city
-            simple_patterns = [r'cuaca', r'weather', r'gimana cuaca', r'how.s the weather']
-            if any(re.search(p, text) for p in simple_patterns):
-                city = "Jakarta"
-            else:
-                return None
-        
-        # Clean city name
-        city = re.sub(r'\b(sekarang|hari ini|today|now|gimana|bagaimana|how)\b', '', city).strip()
-        if not city:
-            city = "Jakarta"
-        
-        result = await get_weather(city)
-        if result["success"]:
-            return (
-                f"🌤️ **Cuaca di {result['city']}**\n"
-                f"**{result['description']}**\n"
-                f"🌡️ Suhu: {result['temp']}°C (terasa {result['feels_like']}°C)\n"
-                f"💧 Kelembapan: {result['humidity']}%\n"
-                f"🌬️ Angin: {result['wind_speed']} km/h"
-            )
         return None
