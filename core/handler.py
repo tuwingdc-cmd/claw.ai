@@ -1659,7 +1659,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict):
                     action_type = result_data.get("type")
-                    if action_type in ("download", "image", "upload_file", "reminder"):
+                    if action_type in ("download", "image", "upload_file", "reminder", "send_message"):
                         pending_actions.append(result_data)
             except (json.JSONDecodeError, TypeError):
                 pass
