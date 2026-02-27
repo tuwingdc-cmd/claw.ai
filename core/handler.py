@@ -1218,6 +1218,18 @@ async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
     try:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         
+        # ── IMAGE FILES — Return URL for vision processing ──
+        image_extensions = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
+        
+        if ext in image_extensions:
+            log.info(f"🖼️ Image detected: {filename}")
+            return json.dumps({
+                "type": "image_attachment",
+                "url": file_url,
+                "filename": filename,
+            })
+        # ============ AKHIR TAMBAHAN ============
+        
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
@@ -1663,6 +1675,62 @@ Respond in the same language as the user.""",
 }
 
 # ============================================================
+# VISION — Process images with AI
+# ============================================================
+
+async def process_with_vision(content: str, image_urls: list, settings: dict) -> Optional[str]:
+    """Process message with image using vision-capable models"""
+    
+    # Vision-capable providers & models
+    VISION_MODELS = [
+        ("groq", "llama-3.2-90b-vision-preview"),
+        ("groq", "llama-3.2-11b-vision-preview"),
+        ("openrouter", "google/gemini-flash-1.5"),
+        ("openrouter", "anthropic/claude-3-haiku"),
+        ("gemini", "gemini-1.5-flash"),
+        ("pollinations", "gpt-4o-mini"),
+    ]
+    
+    # Build message with images
+    user_content = [{"type": "text", "text": content or "Describe this image / Jelaskan gambar ini"}]
+    
+    for url in image_urls[:3]:  # Max 3 images
+        user_content.append({
+            "type": "image_url",
+            "image_url": {"url": url}
+        })
+    
+    messages = [
+        {
+            "role": "system", 
+            "content": "You are a helpful AI assistant that can see and analyze images. Respond in the same language as the user. Be detailed but concise."
+        },
+        {"role": "user", "content": user_content}
+    ]
+    
+    for prov_name, model_id in VISION_MODELS:
+        prov = ProviderFactory.get(prov_name, API_KEYS)
+        if not prov:
+            continue
+        
+        try:
+            if not await prov.health_check():
+                continue
+                
+            log.info(f"👁️ Trying vision: {prov_name}/{model_id}")
+            resp = await prov.chat(messages, model_id)
+            
+            if resp.success and resp.content:
+                log.info(f"👁️ Vision success via {prov_name}/{model_id}")
+                return resp.content
+        except Exception as e:
+            log.warning(f"👁️ Vision error {prov_name}: {e}")
+            continue
+    
+    return None
+
+
+# ============================================================
 # MAIN HANDLER
 # ============================================================
 
@@ -1677,17 +1745,61 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     # =========================================================
     
     file_context = ""
+    image_urls = []  # <-- TAMBAH
     attachments_data = settings.get("attachments", [])
     
     if attachments_data:
         for att in attachments_data[:3]:  # Max 3 files
             file_content = await read_uploaded_file(att["url"], att["filename"])
             if file_content:
+                # ============ TAMBAHKAN INI ============
+                # Check if it's an image
+                try:
+                    parsed = json.loads(file_content)
+                    if parsed.get("type") == "image_attachment":
+                        image_urls.append(parsed["url"])
+                        file_context += f"\n\n[Image attached: {parsed['filename']}]"
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # ============ AKHIR TAMBAHAN ============
+                
                 file_context += f"\n\n{file_content}"
         
         if file_context:
             content = content + file_context
             log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
+    
+    # ============ TAMBAHKAN INI ============
+    # Store image URLs for vision processing
+    settings["image_urls"] = image_urls
+    # ============ AKHIR TAMBAHAN ============
+        
+        if file_context:
+            content = content + file_context
+            log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
+
+       # =========================================================
+    # STEP 0B: Process images with Vision AI
+    # =========================================================
+    
+    image_urls = settings.get("image_urls", [])
+    if image_urls:
+        log.info(f"👁️ Processing {len(image_urls)} image(s) with vision AI")
+        
+        vision_result = await process_with_vision(content, image_urls, settings)
+        
+        if vision_result:
+            save_message(guild_id, channel_id, user_id, user_name, "user", f"{content} [+{len(image_urls)} image(s)]")
+            save_message(guild_id, channel_id, user_id, user_name, "assistant", vision_result)
+            return {"text": vision_result, "fallback_note": "👁️ Vision AI", "actions": []}
+        else:
+            # Fallback message if vision fails
+            return {
+                "text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti atau kirim dalam format lain.",
+                "fallback_note": None,
+                "actions": []
+            }
 
     # =========================================================
     # STEP 1: Try smart skills (time, weather, calendar)
