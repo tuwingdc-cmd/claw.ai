@@ -945,11 +945,42 @@ SET_REMINDER_TOOL = {
     }
 }
 
+SEND_MESSAGE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "send_message",
+        "description": (
+            "Send a message or file to a different channel or DM the user. "
+            "Use when user asks to: send to another channel, DM me, kirim ke DM, "
+            "send to #channel-name, etc."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "destination": {
+                    "type": "string",
+                    "enum": ["dm", "channel"],
+                    "description": "Where to send: 'dm' for Direct Message, 'channel' for another channel"
+                },
+                "channel_name": {
+                    "type": "string",
+                    "description": "Channel name (without #) if destination is 'channel'. e.g. 'general', 'bot-spam'"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Message content to send"
+                }
+            },
+            "required": ["destination"]
+        }
+    }
+}
 
 TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
     CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
+    SEND_MESSAGE_TOOL,  # <-- TAMBAH
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
 
@@ -1125,7 +1156,7 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             return json.dumps(result)
         return f"Failed to create {filename}"
 
-    # ── SET REMINDER ──
+        # ── SET REMINDER ──
     elif tool_name == "set_reminder":
         message = tool_args.get("message", "Reminder!")
         minutes = tool_args.get("minutes")
@@ -1158,8 +1189,7 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                 "trigger_time": daily_time,
             })
         else:
-            # Default: 5 minutes
-                        return json.dumps({
+            return json.dumps({
                 "type": "reminder",
                 "message": message,
                 "trigger_minutes": 5,
@@ -1167,6 +1197,29 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                 "recurring": False,
                 "timezone": timezone,
             })
+
+    # ══════════════════════════════════════════
+    # TARUH DI SINI ↓↓↓
+    # ══════════════════════════════════════════
+
+    # ── SEND MESSAGE ──
+    elif tool_name == "send_message":
+        destination = tool_args.get("destination", "dm")
+        channel_name = tool_args.get("channel_name", "")
+        msg_content = tool_args.get("message", "")
+        
+        log.info(f"📤 Tool: send_message(dest={destination}, channel={channel_name})")
+        
+        return json.dumps({
+            "type": "send_message",
+            "destination": destination,
+            "channel_name": channel_name,
+            "message": msg_content,
+        })
+
+    # ══════════════════════════════════════════
+    # AKHIR TAMBAHAN ↑↑↑
+    # ══════════════════════════════════════════
 
     # ── SYSTEM STATUS ──
     elif tool_name == "system_status":
