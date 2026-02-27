@@ -1740,19 +1740,18 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
 
     history = get_conversation(guild_id, channel_id, limit=30)
 
-    # =========================================================
+        # =========================================================
     # STEP 0: Read file attachments (if any)
     # =========================================================
     
     file_context = ""
-    image_urls = []  # <-- TAMBAH
+    image_urls = []
     attachments_data = settings.get("attachments", [])
     
     if attachments_data:
         for att in attachments_data[:3]:  # Max 3 files
             file_content = await read_uploaded_file(att["url"], att["filename"])
             if file_content:
-                # ============ TAMBAHKAN INI ============
                 # Check if it's an image
                 try:
                     parsed = json.loads(file_content)
@@ -1762,7 +1761,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
                         continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-                # ============ AKHIR TAMBAHAN ============
                 
                 file_context += f"\n\n{file_content}"
         
@@ -1770,20 +1768,13 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             content = content + file_context
             log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
     
-    # ============ TAMBAHKAN INI ============
     # Store image URLs for vision processing
     settings["image_urls"] = image_urls
-    # ============ AKHIR TAMBAHAN ============
-        
-        if file_context:
-            content = content + file_context
-            log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
 
-       # =========================================================
+    # =========================================================
     # STEP 0B: Process images with Vision AI
     # =========================================================
     
-    image_urls = settings.get("image_urls", [])
     if image_urls:
         log.info(f"👁️ Processing {len(image_urls)} image(s) with vision AI")
         
@@ -1794,7 +1785,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             save_message(guild_id, channel_id, user_id, user_name, "assistant", vision_result)
             return {"text": vision_result, "fallback_note": "👁️ Vision AI", "actions": []}
         else:
-            # Fallback message if vision fails
             return {
                 "text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti atau kirim dalam format lain.",
                 "fallback_note": None,
