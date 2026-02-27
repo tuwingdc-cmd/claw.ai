@@ -475,6 +475,33 @@ async def execute_reminder_action(message: discord.Message, action: dict):
         _active_reminders[reminder_id] = task
         log.info(f"⏰ Daily reminder set: {daily_time} {'(recurring)' if recurring else '(once)'} → {reminder_msg}")
 
+
+# ============================================================
+# SEND MESSAGE ACTION HANDLER
+# ============================================================
+
+async def execute_send_message_action(message, action):
+    """Send message to DM or another channel"""
+    destination = action.get("destination", "dm")
+    channel_name = action.get("channel_name", "")
+    msg_content = action.get("message", "")
+    try:
+        if destination == "dm":
+            dm_channel = await message.author.create_dm()
+            await dm_channel.send(msg_content or "📬 Pesan dari bot!")
+            log.info(f"📤 DM sent to {message.author.name}")
+        elif destination == "channel" and channel_name:
+            target_channel = discord.utils.get(message.guild.text_channels, name=channel_name)
+            if target_channel:
+                await target_channel.send(msg_content or "📬 Pesan dari bot!")
+                log.info(f"📤 Message sent to #{channel_name}")
+            else:
+                await message.channel.send(f"❌ Channel #{channel_name} tidak ditemukan.")
+    except discord.Forbidden:
+        await message.channel.send("❌ Tidak bisa kirim DM. Pastikan DM kamu terbuka.")
+    except Exception as e:
+        log.error(f"📤 Send message error: {e}")
+
 # ============================================================
 # WAVELINK EVENTS (Music System)
 # ============================================================
@@ -653,6 +680,8 @@ async def on_message(message: discord.Message):
                 await execute_file_upload_action(message, action)
             elif action_type == "reminder":
                 await execute_reminder_action(message, action)
+            elif action_type == "send_message":
+                await execute_send_message_action(message, action)
         except Exception as e:
             log.error(f"🔧 Action error [{action.get('type')}]: {e}")
 
