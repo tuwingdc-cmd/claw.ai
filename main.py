@@ -673,10 +673,7 @@ async def on_message(message: discord.Message):
         guild = message.guild
         # Get online members (need members intent)
         online_members = []
-        log.info(f"👥 Total guild.members: {len(guild.members)}")
         for m in guild.members:
-            if not m.bot:
-                log.info(f"👥 Member: {m.display_name} | status: {m.status}")
             if not m.bot and str(m.status) != "offline":
                 status_icon = {"online": "🟢", "idle": "🌙", "dnd": "🔴"}.get(str(m.status), "⚪")
                 online_members.append(f"{status_icon} {m.display_name}")
