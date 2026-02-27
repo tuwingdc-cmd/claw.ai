@@ -33,3 +33,9 @@ data/
 *.backup*
 *.pyy
 *.pyyny
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/
