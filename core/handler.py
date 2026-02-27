@@ -610,6 +610,51 @@ GET_WEATHER_TOOL = {
     }
 }
 
+GET_FORECAST_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_forecast",
+        "description": (
+            "Get weather forecast for the next few days. "
+            "Use when asked about: tomorrow's weather, weekly forecast, "
+            "will it rain tomorrow, cuaca besok, ramalan cuaca."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "City name, e.g. Jakarta, Tokyo, London"
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Number of forecast days (1-7). Default: 3"
+                }
+            },
+            "required": ["city"]
+        }
+    }
+}
+
+    # ── GET FORECAST ──
+    elif tool_name == "get_forecast":
+        from skills.weather_skill import get_forecast
+        city = tool_args.get("city", "Jakarta")
+        days = tool_args.get("days", 3)
+        log.info(f"🌤️ Tool: get_forecast({city}, {days} days)")
+        result = await get_forecast(city, days)
+        if result["success"]:
+            lines = [f"📅 Ramalan Cuaca {result['city']} ({days} hari):\n"]
+            for f in result["forecasts"]:
+                lines.append(
+                    f"• {f['date']}: {f['description']}\n"
+                    f"  🌡️ {f['temp_min']}°C - {f['temp_max']}°C | "
+                    f"🌧️ {f['rain_chance']}% hujan | "
+                    f"💨 {f['wind_max']} km/h"
+                )
+            return "\n".join(lines)
+        return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
+
 CALCULATE_TOOL = {
     "type": "function",
     "function": {
@@ -921,10 +966,10 @@ SET_REMINDER_TOOL = {
 
 
 TOOLS_LIST = [
-    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, CALCULATE_TOOL,
-    TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, GENERATE_IMAGE_TOOL,
-    CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
-    SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL  # <-- TAMBAH INI
+    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,  # <-- tambah
+    CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL, 
+    GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
+    SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
 
 
@@ -976,13 +1021,21 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         log.info(f"🌤️ Tool: get_weather({city})")
         result = await get_weather(city)
         if result["success"]:
-            return (
-                f"Weather in {result['city']}: {result['description']}, "
-                f"Temperature: {result['temp']}°C (feels like {result['feels_like']}°C), "
-                f"Humidity: {result['humidity']}%, "
-                f"Wind: {result['wind_speed']} km/h"
+            response = (
+                f"Cuaca di {result['city']}: {result['description']}\n"
+                f"🌡️ Suhu: {result['temp']}°C (terasa {result['feels_like']}°C)\n"
+                f"💧 Kelembapan: {result['humidity']}%\n"
+                f"💨 Angin: {result['wind_speed']} km/h"
             )
-        return f"Error: {result.get('error', 'City not found')}"
+            # Tambahan info jika ada
+            if result.get('pressure'):
+                response += f"\n🌡️ Tekanan: {result['pressure']} hPa"
+            if result.get('visibility'):
+                response += f"\n👁️ Visibilitas: {result['visibility']} km"
+            
+            response += f"\n\n📡 Sumber: {result.get('source', 'Weather API')}"
+            return response
+        return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
 
     # ── CALCULATE ──
     elif tool_name == "calculate":
@@ -1937,4 +1990,3 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
         return {"text": text, "fallback_note": fb_note, "actions": []}
     return {"text": resp.content, "fallback_note": None, "actions": []}
-
