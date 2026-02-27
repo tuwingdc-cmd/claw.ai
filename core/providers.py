@@ -1,7 +1,16 @@
 """
 All AI Provider Implementations
 Single file containing all provider classes
-— Verified Feb 22, 2026 —
+— Verified Feb 27, 2026 —
+
+CHANGELOG (Feb 27):
+- TAMBAH: MistralProvider (OpenAI-compatible)
+- TAMBAH: NvidiaProvider (OpenAI-compatible)  
+- TAMBAH: OpenAIProvider (OpenAI-compatible)
+- TAMBAH: AnthropicProvider (custom /v1/messages)
+- TAMBAH: XAIProvider (OpenAI-compatible)
+- UPDATE: TOOL_CAPABLE_PROVIDERS += mistral, nvidia, openai, anthropic, xai
+- UPDATE: ProviderFactory += semua provider baru
 """
 
 import os
@@ -15,9 +24,13 @@ from dataclasses import dataclass
 log = logging.getLogger(__name__)
 
 # ============================================================
-# FIX #3: Hapus "puter" — PuterProvider tidak handle tools
+# TOOL CAPABLE PROVIDERS — Updated with new providers
 # ============================================================
-TOOL_CAPABLE_PROVIDERS = {"groq", "openrouter", "cerebras", "sambanova", "Pollinations", "routeway"}
+TOOL_CAPABLE_PROVIDERS = {
+    "groq", "openrouter", "cerebras", "sambanova", "pollinations",
+    "routeway", "mistral", "nvidia", "openai", "anthropic", "xai",
+    "gemini", "cohere", "siliconflow", "cloudflare",
+}
 
 def supports_tool_calling(provider_name: str) -> bool:
     return provider_name in TOOL_CAPABLE_PROVIDERS
@@ -153,6 +166,199 @@ class GroqProvider(OpenAICompatibleProvider):
         super().__init__(api_key)
         self.name = "groq"
         self.endpoint = "https://api.groq.com/openai/v1/chat/completions"
+
+
+# ============================================================
+# MISTRAL PROVIDER (NEW)
+# ============================================================
+
+class MistralProvider(OpenAICompatibleProvider):
+    """Mistral API - 1B tokens/month free (Experiment plan)"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "mistral"
+        self.endpoint = "https://api.mistral.ai/v1/chat/completions"
+
+
+# ============================================================
+# NVIDIA NIM PROVIDER (NEW)
+# ============================================================
+
+class NvidiaProvider(OpenAICompatibleProvider):
+    """NVIDIA NIM API - Free tier prototyping on DGX Cloud"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "nvidia"
+        self.endpoint = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+
+# ============================================================
+# OPENAI PROVIDER (NEW)
+# ============================================================
+
+class OpenAIProvider(OpenAICompatibleProvider):
+    """OpenAI API - GPT-5, o3, o4-mini (Paid only)"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "openai"
+        self.endpoint = "https://api.openai.com/v1/chat/completions"
+
+
+# ============================================================
+# XAI PROVIDER (NEW)
+# ============================================================
+
+class XAIProvider(OpenAICompatibleProvider):
+    """xAI Grok API - Grok 4.1 / 4 / 3 (Paid only)"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "xai"
+        self.endpoint = "https://api.x.ai/v1/chat/completions"
+
+
+# ============================================================
+# ANTHROPIC PROVIDER (NEW — NOT OpenAI-compatible)
+# ============================================================
+
+class AnthropicProvider(BaseProvider):
+    """Anthropic Claude API - Uses /v1/messages (NOT OpenAI-compatible)"""
+    
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.name = "anthropic"
+        self.endpoint = "https://api.anthropic.com/v1/messages"
+    
+    def _build_headers(self) -> Dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs
+    ) -> AIResponse:
+        import time
+        start = time.time()
+        
+        # Anthropic format: system terpisah dari messages
+        system_text = None
+        anthropic_messages = []
+        
+        for msg in messages:
+            if msg["role"] == "system":
+                system_text = msg["content"]
+            else:
+                role = msg["role"]  # "user" or "assistant"
+                anthropic_messages.append({
+                    "role": role,
+                    "content": msg["content"]
+                })
+        
+        # Pastikan messages tidak kosong dan dimulai dengan "user"
+        if not anthropic_messages:
+            anthropic_messages = [{"role": "user", "content": "Hello"}]
+        
+        payload = {
+            "model": model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        
+        if system_text:
+            payload["system"] = system_text
+        
+        # Tool calling support
+        if kwargs.get("tools"):
+            # Convert OpenAI tool format → Anthropic format
+            anthropic_tools = []
+            for tool in kwargs["tools"]:
+                if tool.get("type") == "function":
+                    func = tool["function"]
+                    anthropic_tools.append({
+                        "name": func["name"],
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    })
+            if anthropic_tools:
+                payload["tools"] = anthropic_tools
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.endpoint,
+                    headers=self._build_headers(),
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=90)
+                ) as resp:
+                    latency = time.time() - start
+                    
+                    if resp.status == 200:
+                        data = await resp.json()
+                        
+                        # Parse Anthropic response format
+                        content_parts = data.get("content", [])
+                        text_content = ""
+                        tool_calls = []
+                        
+                        for part in content_parts:
+                            if part["type"] == "text":
+                                text_content += part["text"]
+                            elif part["type"] == "tool_use":
+                                # Convert to OpenAI tool_call format for compatibility
+                                tool_calls.append({
+                                    "id": part["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": part["name"],
+                                        "arguments": __import__("json").dumps(part["input"]),
+                                    }
+                                })
+                        
+                        tokens_in = data.get("usage", {}).get("input_tokens", 0)
+                        tokens_out = data.get("usage", {}).get("output_tokens", 0)
+                        
+                        return AIResponse(
+                            success=True,
+                            content=text_content,
+                            provider=self.name,
+                            model=model,
+                            tokens_used=tokens_in + tokens_out,
+                            latency=latency,
+                            tool_calls=tool_calls if tool_calls else None,
+                            raw=data,
+                        )
+                    else:
+                        error_text = await resp.text()
+                        log.warning(f"Anthropic error {resp.status}: {error_text[:200]}")
+                        return AIResponse(
+                            success=False, content="",
+                            provider=self.name, model=model,
+                            error=f"HTTP {resp.status}: {error_text[:100]}",
+                            latency=latency,
+                        )
+        
+        except asyncio.TimeoutError:
+            return AIResponse(
+                success=False, content="", provider=self.name,
+                model=model, error="Request timeout"
+            )
+        except Exception as e:
+            log.error(f"Anthropic exception: {e}")
+            return AIResponse(
+                success=False, content="", provider=self.name,
+                model=model, error=str(e)
+            )
 
 
 # ============================================================
@@ -702,7 +908,13 @@ class PuterProvider(BaseProvider):
 
 
 # ============================================================
-# PROVIDER FACTORY
+# NVIDIA PROVIDER (fallback for rate limits)
+# ============================================================
+# Already defined above as NvidiaProvider
+
+
+# ============================================================
+# PROVIDER FACTORY — Updated with ALL providers
 # ============================================================
 
 class ProviderFactory:
@@ -771,6 +983,35 @@ class ProviderFactory:
             key = api_keys.get("routeway")
             if key:
                 provider = RoutewayProvider(key)
+        
+        # ── NEW PROVIDERS ──────────────────────────────────
+        
+        elif provider_name == "mistral":
+            key = api_keys.get("mistral")
+            if key:
+                provider = MistralProvider(key)
+        
+        elif provider_name == "nvidia":
+            key = api_keys.get("nvidia")
+            if key:
+                provider = NvidiaProvider(key)
+        
+        elif provider_name == "openai":
+            key = api_keys.get("openai")
+            if key:
+                provider = OpenAIProvider(key)
+        
+        elif provider_name == "anthropic":
+            key = api_keys.get("anthropic")
+            if key:
+                provider = AnthropicProvider(key)
+        
+        elif provider_name == "xai":
+            key = api_keys.get("xai")
+            if key:
+                provider = XAIProvider(key)
+        
+        # ── EXISTING (no key needed) ───────────────────────
                 
         elif provider_name == "mlvoca":
             provider = MLVOCAProvider()
