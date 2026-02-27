@@ -34,6 +34,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 API_KEYS = {
     "groq": os.getenv("GROQ_API_KEY"),
+    "openweathermap": os.getenv("OPENWEATHERMAP_API_KEY"),
     "openrouter": os.getenv("OPENROUTER_API_KEY"),
     "pollinations": os.getenv("POLLINATIONS_API_KEY"),
     "gemini": os.getenv("GEMINI_API_KEY"),
