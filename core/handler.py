@@ -1802,6 +1802,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
     # STEP 0B: Process images with Vision AI
     # =========================================================
     
+    image_urls = settings.get("image_urls", [])
     if image_urls:
         log.info(f"👁️ Processing {len(image_urls)} image(s) with vision AI")
         
@@ -1813,7 +1814,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             return {"text": vision_result, "fallback_note": "👁️ Vision AI", "actions": []}
         else:
             return {
-                "text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti atau kirim dalam format lain.",
+                "text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti.",
                 "fallback_note": None,
                 "actions": []
             }
@@ -1936,3 +1937,4 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         save_message(guild_id, channel_id, user_id, user_name, "assistant", text)
         return {"text": text, "fallback_note": fb_note, "actions": []}
     return {"text": resp.content, "fallback_note": None, "actions": []}
+
