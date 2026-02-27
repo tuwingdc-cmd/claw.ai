@@ -1250,7 +1250,41 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
     elif tool_name == "get_server_info":
         info_type = tool_args.get("info_type", "all")
         log.info(f"👥 Tool: get_server_info({info_type})")
-        return json.dumps({"type": "get_server_info", "info_type": info_type})
+        
+        server_info = tool_args.get("_server_info", {})
+        
+        lines = []
+        
+        if info_type in ("voice", "all"):
+            voice = server_info.get("voice_channels", [])
+            if voice:
+                lines.append("🎤 **Voice Channels:**")
+                for v in voice:
+                    lines.append(f"  {v}")
+            else:
+                lines.append("🎤 Tidak ada yang di voice channel.")
+        
+        if info_type in ("members", "all"):
+            online = server_info.get("online_members", [])
+            if online:
+                lines.append(f"\n👥 **Online Members ({len(online)}):**")
+                for m in online[:20]:
+                    lines.append(f"  {m}")
+            else:
+                lines.append("\n👥 Tidak ada member online.")
+        
+        if info_type in ("channels", "all"):
+            channels = server_info.get("text_channels", [])
+            if channels:
+                lines.append(f"\n📝 **Text Channels ({len(channels)}):**")
+                for ch in channels[:15]:
+                    lines.append(f"  {ch}")
+        
+        server_name = server_info.get("server_name", "Unknown")
+        total = server_info.get("total_members", 0)
+        lines.insert(0, f"🖥️ **Server: {server_name}** | Total members: {total}\n")
+        
+        return "\n".join(lines) if lines else "Tidak ada info server yang tersedia."
 
     # ── SYSTEM STATUS ──
     elif tool_name == "system_status":
@@ -1630,7 +1664,7 @@ async def create_document(file_type: str, filename: str, content: str, title: st
 # ============================================================
 
 async def handle_with_tools(messages: list, prov_name: str, model: str,
-                             guild_id: int = 0) -> tuple:
+                             guild_id: int = 0, settings: dict = None) -> tuple:
     """
     Returns: (AIResponse, note_string, actions_list)
     """
@@ -2028,7 +2062,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
             {"role": "user", "content": user_content}
         ]
 
-        tool_resp, tool_note, tool_actions = await handle_with_tools(tool_msgs, prov, mid, guild_id)
+        tool_resp, tool_note, tool_actions = await handle_with_tools(tool_msgs, prov, mid, guild_id, settings)
         if tool_resp and tool_resp.success:
             text = strip_think_tags(tool_resp.content) or "Tidak ada jawaban."
             save_message(guild_id, channel_id, user_id, user_name, "user", content)

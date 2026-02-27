@@ -667,6 +667,48 @@ async def on_message(message: discord.Message):
     else:
         settings["attachments"] = []
 
+    # ── Inject server info for AI context ──
+    try:
+        guild = message.guild
+        # Get online members (need members intent)
+        online_members = []
+        for m in guild.members:
+            if not m.bot and str(m.status) != "offline":
+                status_icon = {"online": "🟢", "idle": "🌙", "dnd": "🔴"}.get(str(m.status), "⚪")
+                online_members.append(f"{status_icon} {m.display_name}")
+        
+        # Get voice channel info
+        voice_info = []
+        for vc in guild.voice_channels:
+            vc_members = [m.display_name for m in vc.members if not m.bot]
+            if vc_members:
+                voice_info.append(f"#{vc.name}: {', '.join(vc_members)}")
+            else:
+                voice_info.append(f"#{vc.name}: (kosong)")
+        
+        # Get all text channels
+        text_channels = [f"#{ch.name}" for ch in guild.text_channels]
+        
+        # Get all members
+        all_members = []
+        for m in guild.members:
+            if not m.bot:
+                status_icon = {"online": "🟢", "idle": "🌙", "dnd": "🔴", "offline": "⚫"}.get(str(m.status), "⚪")
+                roles = [r.name for r in m.roles if r.name != "@everyone"]
+                all_members.append(f"{status_icon} {m.display_name} ({', '.join(roles) if roles else 'no role'})")
+        
+        settings["server_info"] = {
+            "server_name": guild.name,
+            "total_members": guild.member_count,
+            "online_members": online_members,
+            "all_members": all_members,
+            "voice_channels": voice_info,
+            "text_channels": text_channels,
+        }
+    except Exception as e:
+        log.warning(f"Failed to get server info: {e}")
+        settings["server_info"] = {}
+
     async with message.channel.typing():
         from core.handler import handle_message
         settings["guild_id"] = message.guild.id
