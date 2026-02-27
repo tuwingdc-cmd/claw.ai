@@ -502,6 +502,33 @@ async def execute_send_message_action(message, action):
     except Exception as e:
         log.error(f"📤 Send message error: {e}")
 
+
+# ============================================================
+# GET SERVER INFO ACTION HANDLER
+# ============================================================
+
+async def execute_get_server_info_action(message, action):
+    """Get server members, voice channel info"""
+    info_type = action.get("info_type", "all")
+    guild = message.guild
+    result = []
+    if info_type in ("members", "all"):
+        online = [m for m in guild.members if m.status != discord.Status.offline and not m.bot]
+        result.append(f"**👥 Online Members ({len(online)}):**")
+        for member in online[:20]:
+            status_emoji = {"online": "🟢", "idle": "🌙", "dnd": "🔴"}.get(str(member.status), "⚪")
+            result.append(f"  {status_emoji} {member.display_name}")
+    if info_type in ("voice", "all"):
+        result.append(f"\n**🎤 Voice Channels:**")
+        for vc in guild.voice_channels:
+            members = [m.display_name for m in vc.members if not m.bot]
+            result.append(f"  🔊 {vc.name}: {', '.join(members) if members else '(kosong)'}")
+    if info_type in ("channels", "all"):
+        result.append(f"\n**📝 Text Channels:**")
+        for ch in guild.text_channels[:10]:
+            result.append(f"  # {ch.name}")
+    return "\n".join(result) if result else "Tidak ada info."
+
 # ============================================================
 # WAVELINK EVENTS (Music System)
 # ============================================================
@@ -682,6 +709,9 @@ async def on_message(message: discord.Message):
                 await execute_reminder_action(message, action)
             elif action_type == "send_message":
                 await execute_send_message_action(message, action)
+            elif action_type == "get_server_info":
+                info_text = await execute_get_server_info_action(message, action)
+                await message.channel.send(info_text)
         except Exception as e:
             log.error(f"🔧 Action error [{action.get('type')}]: {e}")
 

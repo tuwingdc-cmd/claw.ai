@@ -831,6 +831,30 @@ CREATE_DOCUMENT_TOOL = {
     }
 }
 
+
+GET_SERVER_INFO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_server_info",
+        "description": (
+            "Get Discord server information: members, channels, voice channel users. "
+            "Use when user asks: who is online, siapa yang ada di server, "
+            "siapa di voice channel, list members, server info."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "info_type": {
+                    "type": "string",
+                    "enum": ["members", "voice", "channels", "all"],
+                    "description": "Type of info: members=member list, voice=who in voice channels, channels=channel list, all=everything"
+                }
+            },
+            "required": []
+        }
+    }
+}
+
 SYSTEM_STATUS_TOOL = {
     "type": "function",
     "function": {
@@ -1220,6 +1244,13 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
     # ══════════════════════════════════════════
     # AKHIR TAMBAHAN ↑↑↑
     # ══════════════════════════════════════════
+
+
+    # ── GET SERVER INFO ──
+    elif tool_name == "get_server_info":
+        info_type = tool_args.get("info_type", "all")
+        log.info(f"👥 Tool: get_server_info({info_type})")
+        return json.dumps({"type": "get_server_info", "info_type": info_type})
 
     # ── SYSTEM STATUS ──
     elif tool_name == "system_status":
@@ -1659,7 +1690,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict):
                     action_type = result_data.get("type")
-                    if action_type in ("download", "image", "upload_file", "reminder", "send_message"):
+                    if action_type in ("download", "image", "upload_file", "reminder", "send_message", "get_server_info"):
                         pending_actions.append(result_data)
             except (json.JSONDecodeError, TypeError):
                 pass
