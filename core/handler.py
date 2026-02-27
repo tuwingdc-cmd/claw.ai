@@ -1348,9 +1348,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     max_rounds = 3
     current_messages = list(messages)
     tools_used = []
-    pending_actions = []  # music, download, image
-
-        # ... kode sebelumnya ...
+    pending_actions = []
 
     for round_num in range(max_rounds):
         current_messages.append({
@@ -1359,8 +1357,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             "tool_calls": tool_calls
         })
 
-        for tc in tool_calls:  # Baris 1360
-            # Baris 1361 harus ada 4 spasi (atau 1 tab) lebih dalam dari baris 1360
+        for tc in tool_calls:
             fn_name = tc.get("function", {}).get("name", "")
             fn_args_str = tc.get("function", {}).get("arguments", "{}")
             tool_call_id = tc.get("id", f"call_{round_num}")
@@ -1370,72 +1367,59 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
-    # Capture music action manually
-    if fn_name == "play_music":
-        pending_actions.append({
-            "type": "music",
-            "action": fn_args.get("action", "play"),
-            "query": fn_args.get("query", ""),
-        })
+            # Capture music action manually
+            if fn_name == "play_music":
+                pending_actions.append({
+                    "type": "music",
+                    "action": fn_args.get("action", "play"),
+                    "query": fn_args.get("query", ""),
+                })
 
-    tool_result = await execute_tool_call(fn_name, fn_args)
+            tool_result = await execute_tool_call(fn_name, fn_args)
 
-    # ✅ Updated action parser
-    try:
-        result_data = json.loads(tool_result)
-        if isinstance(result_data, dict):
-            action_type = result_data.get("type")
-            
-            if action_type == "download":
-                pending_actions.append(result_data)
-            
-            elif action_type == "image":
-                pending_actions.append(result_data)
-            
-            elif action_type == "upload_file":
-                pending_actions.append(result_data)
-            
-            elif action_type == "reminder":
-                pending_actions.append(result_data)
+            # Updated action parser
+            try:
+                result_data = json.loads(tool_result)
+                if isinstance(result_data, dict):
+                    action_type = result_data.get("type")
+                    if action_type in ("download", "image", "upload_file", "reminder"):
+                        pending_actions.append(result_data)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-    except (json.JSONDecodeError, TypeError):
-        pass
+            log.info(f"✅ Round {round_num + 1}: {fn_name}")
+            tools_used.append(fn_name)
 
-    log.info(f"✅ Round {round_num + 1}: {fn_name}")
-    tools_used.append(fn_name)
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
+            })
 
-        current_messages.append({
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
-    })
-
-    # ── FIX: Round 2+ tanpa tools agar model jawab langsung ──
-    resp = await prov.chat(current_messages, model)  # Tanpa tools
-
-    if not resp.success:
-        # Coba tanpa tool_calls di message terakhir kalau error
-        if "tool" in str(resp.error).lower():
-            log.warning("Tool error, retrying without tool context...")
-            clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
-            clean_messages.append({"role": "user", "content": "Based on the information gathered, please provide your response."})
-            resp = await prov.chat(clean_messages, model)
+        # Round selesai, minta AI respond
+        resp = await prov.chat(current_messages, model)
 
         if not resp.success:
-            return None, None, pending_actions
+            if "tool" in str(resp.error).lower():
+                log.warning("Tool error, retrying without tool context...")
+                clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
+                clean_messages.append({"role": "user", "content": "Based on the information gathered, please provide your response."})
+                resp = await prov.chat(clean_messages, model)
+            if not resp.success:
+                return None, None, pending_actions
 
-    tool_calls = getattr(resp, "tool_calls", None)
-    if not tool_calls:
-        _log_request(guild_id, prov_name, model, True, resp.latency)
-        tool_icons = {
-            "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
-            "calculate": "🔢", "translate": "🌐", "play_music": "🎵",
-            "fetch_url": "📄", "generate_image": "🖼️"
-        }
-        unique_tools = list(dict.fromkeys(tools_used))
-        icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
-        note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
-        return resp, note, pending_actions
+        tool_calls = getattr(resp, "tool_calls", None)
+        if not tool_calls:
+            _log_request(guild_id, prov_name, model, True, resp.latency)
+            tool_icons = {
+                "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
+                "calculate": "🔢", "translate": "🌐", "play_music": "🎵",
+                "fetch_url": "📄", "generate_image": "🖼️"
+            }
+            unique_tools = list(dict.fromkeys(tools_used))
+            icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
+            note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
+            return resp, note, pending_actions
 
     _log_request(guild_id, prov_name, model, True, resp.latency)
     return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", pending_actions
