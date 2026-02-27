@@ -1404,38 +1404,38 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     log.info(f"✅ Round {round_num + 1}: {fn_name}")
     tools_used.append(fn_name)
 
-    current_messages.append({
+        current_messages.append({
         "role": "tool",
         "tool_call_id": tool_call_id,
         "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
     })
 
-        # ── FIX: Round 2+ tanpa tools agar model jawab langsung ──
-        resp = await prov.chat(current_messages, model)  # Tanpa tools
+    # ── FIX: Round 2+ tanpa tools agar model jawab langsung ──
+    resp = await prov.chat(current_messages, model)  # Tanpa tools
+
+    if not resp.success:
+        # Coba tanpa tool_calls di message terakhir kalau error
+        if "tool" in str(resp.error).lower():
+            log.warning("Tool error, retrying without tool context...")
+            clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
+            clean_messages.append({"role": "user", "content": "Based on the information gathered, please provide your response."})
+            resp = await prov.chat(clean_messages, model)
 
         if not resp.success:
-            # Coba tanpa tool_calls di message terakhir kalau error
-            if "tool" in str(resp.error).lower():
-                log.warning("Tool error, retrying without tool context...")
-                clean_messages = [m for m in current_messages if m.get("role") != "tool" and "tool_calls" not in m]
-                clean_messages.append({"role": "user", "content": "Based on the information gathered, please provide your response."})
-                resp = await prov.chat(clean_messages, model)
+            return None, None, pending_actions
 
-            if not resp.success:
-                return None, None, pending_actions
-
-        tool_calls = getattr(resp, "tool_calls", None)
-        if not tool_calls:
-            _log_request(guild_id, prov_name, model, True, resp.latency)
-            tool_icons = {
-                "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
-                "calculate": "🔢", "translate": "🌐", "play_music": "🎵",
-                "fetch_url": "📄", "generate_image": "🖼️"
-            }
-            unique_tools = list(dict.fromkeys(tools_used))
-            icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
-            note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
-            return resp, note, pending_actions
+    tool_calls = getattr(resp, "tool_calls", None)
+    if not tool_calls:
+        _log_request(guild_id, prov_name, model, True, resp.latency)
+        tool_icons = {
+            "web_search": "🔍", "get_time": "🕐", "get_weather": "🌤️",
+            "calculate": "🔢", "translate": "🌐", "play_music": "🎵",
+            "fetch_url": "📄", "generate_image": "🖼️"
+        }
+        unique_tools = list(dict.fromkeys(tools_used))
+        icons = "".join(tool_icons.get(t, "🔧") for t in unique_tools)
+        note = f"{icons} Auto-tools via {prov_name}/{model}" if tools_used else None
+        return resp, note, pending_actions
 
     _log_request(guild_id, prov_name, model, True, resp.latency)
     return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", pending_actions
