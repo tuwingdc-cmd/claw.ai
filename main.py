@@ -795,6 +795,8 @@ async def on_message(message: discord.Message):
                 await execute_reminder_action(message, action)
             elif action_type == "send_message":
                 await execute_send_message_action(message, action)
+            elif action_type == "moderate":
+                await execute_moderate_action(message, action)
             elif action_type == "get_server_info":
                 info_text = await execute_get_server_info_action(message, action)
                 await message.channel.send(info_text)
@@ -804,6 +806,53 @@ async def on_message(message: discord.Message):
 # ============================================================
 # HELPERS
 # ============================================================
+
+
+async def execute_moderate_action(message, action_data):
+    """Execute moderation: kick, ban, timeout, unban"""
+    import discord
+    mod_action = action_data.get("action", "kick")
+    target_name = action_data.get("target_name", "")
+    reason = action_data.get("reason", "No reason provided")
+    duration = action_data.get("duration_minutes", 10)
+
+    # Cari member by display name
+    target_member = None
+    for m in message.guild.members:
+        if m.display_name.lower() == target_name.lower() or m.name.lower() == target_name.lower():
+            target_member = m
+            break
+
+    if not target_member:
+        await message.channel.send(f"❌ Member **{target_name}** tidak ditemukan di server.")
+        return
+
+    try:
+        if mod_action == "kick":
+            await target_member.kick(reason=reason)
+            await message.channel.send(f"✅ **{target_member.display_name}** telah di-kick. Reason: {reason}")
+        elif mod_action == "ban":
+            await target_member.ban(reason=reason)
+            await message.channel.send(f"✅ **{target_member.display_name}** telah di-ban. Reason: {reason}")
+        elif mod_action == "timeout":
+            from datetime import timedelta
+            await target_member.timeout(timedelta(minutes=duration), reason=reason)
+            await message.channel.send(f"✅ **{target_member.display_name}** di-timeout {duration} menit. Reason: {reason}")
+        elif mod_action == "unban":
+            bans = [ban async for ban in message.guild.bans()]
+            found = False
+            for ban_entry in bans:
+                if ban_entry.user.name.lower() == target_name.lower():
+                    await message.guild.unban(ban_entry.user, reason=reason)
+                    await message.channel.send(f"✅ **{ban_entry.user.name}** telah di-unban.")
+                    found = True
+                    break
+            if not found:
+                await message.channel.send(f"❌ User **{target_name}** tidak ditemukan di ban list.")
+    except discord.Forbidden:
+        await message.channel.send(f"❌ Bot tidak punya permission untuk {mod_action} member ini. Pastikan role bot lebih tinggi dari target.")
+    except Exception as e:
+        await message.channel.send(f"❌ Error: {e}")
 
 def _split_message(text: str, limit: int = 2000) -> list:
     if len(text) <= limit:

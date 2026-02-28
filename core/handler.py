@@ -926,11 +926,47 @@ SEND_MESSAGE_TOOL = {
     }
 }
 
+
+MODERATE_MEMBER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "moderate_member",
+        "description": (
+            "Moderate a Discord server member: kick, ban, mute, timeout. "
+            "ONLY execute when admin/owner (DemisDc) explicitly commands it. "
+            "Regular users CANNOT use this. Always confirm the target name."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["kick", "ban", "timeout", "unban"],
+                    "description": "Moderation action"
+                },
+                "target_name": {
+                    "type": "string",
+                    "description": "Display name of the target member"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the action"
+                },
+                "duration_minutes": {
+                    "type": "integer",
+                    "description": "Timeout duration in minutes (for timeout only). Default: 10"
+                }
+            },
+            "required": ["action", "target_name"]
+        }
+    }
+}
+
 TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
     CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
-    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL,
+    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL, MODERATE_MEMBER_TOOL,
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
 
@@ -1308,6 +1344,25 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                 return "🔄 Bot is restarting... (this message may not be sent)"
             return f"❌ Restart failed: {result['error']}"
         return f"Unknown action: {action}"
+
+
+    # ── MODERATE MEMBER ──
+    elif tool_name == "moderate_member":
+        caller_id = tool_args.get("_user_id", 0)
+        if not is_admin(caller_id):
+            return "⛔ Hanya DemisDc (admin/owner) yang boleh pakai command moderasi."
+        action = tool_args.get("action", "kick")
+        target_name = tool_args.get("target_name", "")
+        reason = tool_args.get("reason", "No reason provided")
+        duration = tool_args.get("duration_minutes", 10)
+        log.info(f"🔨 Tool: moderate_member({action}, {target_name}) by admin {caller_id}")
+        return json.dumps({
+            "type": "moderate",
+            "action": action,
+            "target_name": target_name,
+            "reason": reason,
+            "duration_minutes": duration,
+        })
 
     return f"Unknown tool: {tool_name}"
 
