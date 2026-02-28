@@ -797,6 +797,8 @@ async def on_message(message: discord.Message):
                 await execute_send_message_action(message, action)
             elif action_type == "moderate":
                 await execute_moderate_action(message, action)
+            elif action_type == "invite":
+                await execute_invite_action(message, action)
             elif action_type == "get_server_info":
                 info_text = await execute_get_server_info_action(message, action)
                 await message.channel.send(info_text)
@@ -807,6 +809,48 @@ async def on_message(message: discord.Message):
 # HELPERS
 # ============================================================
 
+
+
+async def execute_invite_action(message, action_data):
+    """Create invite and DM user"""
+    import discord
+    target_name = action_data.get("target_name", "")
+    channel_name = action_data.get("channel_name", "")
+    uses = action_data.get("max_uses", 1)
+    days = action_data.get("days_valid", 1)
+
+    target_channel = message.channel
+    if channel_name:
+        for ch in message.guild.text_channels:
+            if ch.name.lower() == channel_name.lower():
+                target_channel = ch
+                break
+    
+    try:
+        invite = await target_channel.create_invite(
+            max_uses=uses,
+            max_age=days * 86400,
+            unique=True,
+            reason=f"Invite requested by {message.author.display_name}"
+        )
+    except Exception as e:
+        await message.channel.send(f"❌ Gagal membuat invite: {e}")
+        return
+
+    target_member = None
+    for m in message.guild.members:
+        if m.display_name.lower() == target_name.lower() or m.name.lower() == target_name.lower():
+            target_member = m
+            break
+    
+    if target_member:
+        try:
+            await target_member.send(f"📨 **Invite Link** dari {message.guild.name}:\n{invite.url}")
+            await message.channel.send(f"✅ Invite link sent to **{target_member.display_name}** via DM.")
+        except discord.Forbidden:
+            await message.channel.send(f"❌ Gagal DM **{target_member.display_name}**. Ini link-nya:\n{invite.url}")
+    else:
+        await message.channel.send(f"⚠️ User **{target_name}** tidak ditemukan di server. Ini link-nya:\n{invite.url}")
 
 async def execute_moderate_action(message, action_data):
     """Execute moderation: kick, ban, timeout, unban"""

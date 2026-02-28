@@ -927,6 +927,40 @@ SEND_MESSAGE_TOOL = {
 }
 
 
+
+INVITE_USER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "invite_user",
+        "description": (
+            "Create an invite link to the server and send it to a specific user via DM. "
+            "Use when asked to invite someone or send an invite link."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_name": {
+                    "type": "string",
+                    "description": "Display name of the user to invite (must be in the server to receive DM, or specify channel)"
+                },
+                "channel_name": {
+                    "type": "string",
+                    "description": "Channel to create invite for (default: current)"
+                },
+                "max_uses": {
+                    "type": "integer",
+                    "description": "Max uses for the invite (default: 1)"
+                },
+                "days_valid": {
+                    "type": "integer",
+                    "description": "Days until invite expires (default: 1)"
+                }
+            },
+            "required": ["target_name"]
+        }
+    }
+}
+
 MODERATE_MEMBER_TOOL = {
     "type": "function",
     "function": {
@@ -966,7 +1000,7 @@ TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
     CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
-    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL, MODERATE_MEMBER_TOOL,
+    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL, MODERATE_MEMBER_TOOL, INVITE_USER_TOOL,
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
 
@@ -1346,6 +1380,22 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         return f"Unknown action: {action}"
 
 
+
+    # ── INVITE USER ──
+    elif tool_name == "invite_user":
+        target = tool_args.get("target_name", "")
+        channel = tool_args.get("channel_name", "")
+        uses = tool_args.get("max_uses", 1)
+        days = tool_args.get("days_valid", 1)
+        log.info(f"📨 Tool: invite_user({target})")
+        return json.dumps({
+            "type": "invite",
+            "target_name": target,
+            "channel_name": channel,
+            "max_uses": uses,
+            "days_valid": days
+        })
+
     # ── MODERATE MEMBER ──
     elif tool_name == "moderate_member":
         caller_id = tool_args.get("_user_id", 0)
@@ -1658,7 +1708,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict):
                     action_type = result_data.get("type")
-                    if action_type in ("download", "image", "upload_file", "reminder", "send_message", "get_server_info", "moderate"):
+                    if action_type in ("download", "image", "upload_file", "reminder", "send_message", "get_server_info", "moderate", "invite"):
                         pending_actions.append(result_data)
             except (json.JSONDecodeError, TypeError):
                 pass
