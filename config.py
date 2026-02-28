@@ -605,47 +605,48 @@ PROVIDERS: Dict[str, Provider] = {
         endpoint="https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
         rate_limit="10K neurons/day (free tier)",
         models=[
-            # ── LLM Chat + Tools ───────────────────────────────────
-            Model("@cf/meta/llama-3.3-70b-instruct-fp8-fast",  "⚠️ Llama 3.3 70B ⭐",     ["normal"], 131072, tools=True),
-            Model("@cf/meta/llama-3.1-8b-instruct",            "⚠️ Llama 3.1 8B ⭐",      ["normal"], 131072, tools=True),
-            Model("@cf/meta/llama-3.1-8b-instruct-fp8",        "⚠️ Llama 3.1 8B FP8 ⭐",  ["normal"], 131072, tools=True),
-            Model("@cf/meta/llama-4-scout-17b-16e-instruct",   "⚠️ Llama 4 Scout 🧠⭐",   ["normal", "reasoning"], 131072, tools=True),
-            Model("@cf/mistralai/mistral-small-3.1-24b-instruct","⚠️ Mistral Small 3.1 ⭐", ["normal"], 32768, tools=True),
-            Model("@cf/qwen/qwen2.5-coder-32b-instruct",       "⚠️ Qwen 2.5 Coder 32B ⭐",["normal"], 32768, tools=True),
-            Model("@cf/qwen/qwen3-30b-a3b-fp8",                "⚠️ Qwen 3 30B ⭐",        ["normal"], 32768, tools=True),
-            Model("@cf/zai-org/glm-4.7-flash",                 "⚠️ GLM 4.7 Flash ⭐",     ["normal"], 131072, tools=True),
-            Model("@cf/ibm-granite/granite-4.0-h-micro",       "⚠️ Granite 4.0 Micro",    ["normal"], 131072),
+            # -- Tool Calling (CONFIRMED support) -------------------
+            Model("@hf/nousresearch/hermes-2-pro-mistral-7b",       "Hermes 2 Pro 7B ⭐",    ["normal"], 8192,   tools=True),
+            Model("@cf/mistralai/mistral-small-3.1-24b-instruct",   "Mistral Small 3.1 ⭐",  ["normal"], 32768,  tools=True),
+            Model("@cf/zai-org/glm-4.7-flash",                      "GLM 4.7 Flash ⭐",      ["normal"], 131072, tools=True),
 
-            # ── GPT-OSS ────────────────────────────────────────────
-            Model("@cf/openai/gpt-oss-120b", "⚠️ GPT-OSS 120B 🔥⭐🧠", ["normal", "reasoning"], 131072, tools=True),
-            Model("@cf/openai/gpt-oss-20b",  "⚠️ GPT-OSS 20B ⭐",       ["normal"],              131072, tools=True),
+            # -- Chat (NO tool calling) -----------------------------
+            Model("@cf/meta/llama-3.3-70b-instruct-fp8-fast",       "Llama 3.3 70B",          ["normal"], 131072),
+            Model("@cf/meta/llama-3.1-8b-instruct",                 "Llama 3.1 8B",           ["normal"], 131072),
+            Model("@cf/meta/llama-3.1-8b-instruct-fp8",             "Llama 3.1 8B FP8",       ["normal"], 131072),
+            Model("@cf/meta/llama-3-8b-instruct",                   "Llama 3 8B",             ["normal"], 8192),
+            Model("@cf/meta/llama-3.2-3b-instruct",                 "Llama 3.2 3B",           ["normal"], 131072),
+            Model("@cf/meta/llama-3.2-1b-instruct",                 "Llama 3.2 1B",           ["normal"], 131072),
+            Model("@cf/meta/llama-4-scout-17b-16e-instruct",        "Llama 4 Scout",          ["normal", "reasoning"], 131072),
+            Model("@cf/qwen/qwen2.5-coder-32b-instruct",            "Qwen 2.5 Coder 32B",    ["normal"], 32768),
+            Model("@cf/qwen/qwen3-30b-a3b-fp8",                     "Qwen 3 30B",             ["normal"], 32768),
+            Model("@cf/ibm-granite/granite-4.0-h-micro",            "Granite 4.0 Micro",      ["normal"], 131072),
+            Model("@cf/google/gemma-3-12b-it",                      "Gemma 3 12B",            ["normal"], 131072),
 
-            # ── Vision ─────────────────────────────────────────────
-            Model("@cf/meta/llama-3.2-11b-vision-instruct", "⚠️ Llama 3.2 Vision 👁️", ["normal"], 131072, vision=True),
-            Model("@cf/llava-hf/llava-1.5-7b-hf",          "⚠️ LLaVA 1.5 7B 👁️",     ["normal"], 4096,   vision=True),
+            # -- GPT-OSS (NO tool calling via CF) -------------------
+            Model("@cf/openai/gpt-oss-120b",                        "GPT-OSS 120B",           ["normal", "reasoning"], 131072),
+            Model("@cf/openai/gpt-oss-20b",                         "GPT-OSS 20B",            ["normal"], 131072),
 
-            # ── Reasoning ──────────────────────────────────────────
-            Model("@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", "⚠️ DeepSeek R1 32B 🧠", ["reasoning"], 32768),
-            Model("@cf/qwen/qwq-32b",                              "⚠️ QwQ 32B 🧠",         ["reasoning"], 32768),
+            # -- Vision (NO tool calling) ---------------------------
+            Model("@cf/meta/llama-3.2-11b-vision-instruct",         "Llama 3.2 Vision",       ["normal"], 131072, vision=True),
+            Model("@cf/llava-hf/llava-1.5-7b-hf",                   "LLaVA 1.5 7B",           ["normal"], 4096,   vision=True),
 
-            # ── Smaller Chat ───────────────────────────────────────
-            Model("@cf/google/gemma-3-12b-it",          "⚠️ Gemma 3 12B",     ["normal"], 131072),
-            Model("@cf/meta/llama-3.2-3b-instruct",     "⚠️ Llama 3.2 3B",    ["normal"], 131072),
-            Model("@cf/meta/llama-3.2-1b-instruct",     "⚠️ Llama 3.2 1B",    ["normal"], 131072),
-            Model("@cf/meta/llama-3-8b-instruct",       "⚠️ Llama 3 8B ⭐",   ["normal"], 8192, tools=True),
+            # -- Reasoning (NO tool calling) ------------------------
+            Model("@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",   "DeepSeek R1 32B",        ["reasoning"], 32768),
+            Model("@cf/qwen/qwq-32b",                               "QwQ 32B",                ["reasoning"], 32768),
 
-            # ── Audio ──────────────────────────────────────────────
-            Model("@cf/openai/whisper-large-v3-turbo", "⚠️ Whisper V3 Turbo", ["audio"]),
-            Model("@cf/openai/whisper",                "⚠️ Whisper",          ["audio"]),
-            Model("@cf/deepgram/nova-3",               "⚠️ Deepgram Nova 3",  ["audio"]),
+            # -- Audio ----------------------------------------------
+            Model("@cf/openai/whisper-large-v3-turbo",               "Whisper V3 Turbo",       ["audio"]),
+            Model("@cf/openai/whisper",                              "Whisper",                ["audio"]),
+            Model("@cf/deepgram/nova-3",                             "Deepgram Nova 3",        ["audio"]),
 
-            # ── Image Generation ───────────────────────────────────
-            Model("@cf/black-forest-labs/flux-2-dev",       "⚠️ FLUX 2 Dev 🎨",    ["normal"]),
-            Model("@cf/black-forest-labs/flux-1-schnell",   "⚠️ FLUX 1 Schnell 🎨", ["normal"]),
+            # -- Image Generation -----------------------------------
+            Model("@cf/black-forest-labs/flux-2-dev",                "FLUX 2 Dev",             ["normal"]),
+            Model("@cf/black-forest-labs/flux-1-schnell",            "FLUX 1 Schnell",         ["normal"]),
 
-            # ── Embedding ──────────────────────────────────────────
-            Model("@cf/baai/bge-m3",           "⚠️ BGE M3 📊",        ["normal"]),
-            Model("@cf/baai/bge-large-en-v1.5","⚠️ BGE Large EN 📊",  ["normal"]),
+            # -- Embedding ------------------------------------------
+            Model("@cf/baai/bge-m3",                                 "BGE M3",                 ["normal"]),
+            Model("@cf/baai/bge-large-en-v1.5",                     "BGE Large EN",           ["normal"]),
         ]
     ),
 

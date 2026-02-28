@@ -828,6 +828,8 @@ def _split_message(text: str, limit: int = 2000) -> list:
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("🔒 Kamu tidak punya izin untuk command ini. Butuh permission: **Manage Server**")
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"❌ Missing argument: `{error.param.name}`")
     elif isinstance(error, commands.CommandInvokeError):
@@ -844,13 +846,13 @@ async def help_cmd(ctx: commands.Context):
         color=discord.Color.blue(),
         description=(
             f"**AI Settings:**\n"
-            f"`{p}set` — Konfigurasi mode, provider, model\n"
-            f"`{p}toggle` — Toggle auto-chat ON/OFF\n"
-            f"`{p}channel` — Enable/disable auto-chat channel\n"
+            f"🔒 `{p}set` — Konfigurasi mode, provider, model\n"
+            f"🔒 `{p}toggle` — Toggle auto-chat ON/OFF\n"
+            f"🔒 `{p}channel` — Enable/disable auto-chat channel\n"
             f"`{p}status` — Lihat konfigurasi saat ini\n"
-            f"`{p}monitor` — Health dashboard provider\n"
-            f"`{p}log [n]` — Lihat request log\n"
-            f"`{p}reset` — Reset ke default\n\n"
+            f"🔒 `{p}monitor` — Health dashboard provider\n"
+            f"🔒 `{p}log [n]` — Lihat request log\n"
+            f"🔒 `{p}reset` — Reset ke default\n\n"
             f"**Skills:**\n"
             f"`{p}time [timezone]` — Cek waktu sekarang\n"
             f"`{p}alarm <menit> <pesan>` — Set alarm\n"
@@ -888,6 +890,7 @@ async def help_cmd(ctx: commands.Context):
 # ============================================================
 
 @bot.command(name="set")
+@commands.has_permissions(manage_guild=True)
 async def set_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
 
@@ -960,6 +963,7 @@ async def set_cmd(ctx: commands.Context):
 # ============================================================
 
 @bot.command(name="toggle")
+@commands.has_permissions(manage_guild=True)
 async def toggle_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
     settings["auto_chat"] = not settings["auto_chat"]
@@ -968,6 +972,7 @@ async def toggle_cmd(ctx: commands.Context):
     await ctx.send(f"Auto-chat: {state} (saved! ✅)")
 
 @bot.command(name="channel")
+@commands.has_permissions(manage_guild=True)
 async def channel_cmd(ctx: commands.Context):
     settings = get_settings(ctx.guild.id)
     ch = ctx.channel.id
@@ -1009,6 +1014,7 @@ async def status_cmd(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 @bot.command(name="monitor")
+@commands.has_permissions(manage_guild=True)
 async def monitor_cmd(ctx: commands.Context):
     available = list_available_providers()
     lines = ["**📊 Provider Health**\n"]
@@ -1022,6 +1028,7 @@ async def monitor_cmd(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 @bot.command(name="log")
+@commands.has_permissions(manage_guild=True)
 async def log_cmd(ctx: commands.Context, n: int = 10):
     from core.handler import request_logs
     guild_logs = [l for l in request_logs if l.get("guild_id") == ctx.guild.id]
@@ -1044,6 +1051,7 @@ async def log_cmd(ctx: commands.Context, n: int = 10):
     await ctx.send(embed=embed)
 
 @bot.command(name="reset")
+@commands.has_permissions(manage_guild=True)
 async def reset_cmd(ctx: commands.Context):
     SettingsManager.reset(ctx.guild.id)
     await ctx.send("🔄 Reset ke default berhasil. (saved! ✅)")
@@ -1057,6 +1065,10 @@ async def clear_cmd(ctx: commands.Context, scope: str = "channel"):
     from core.database import clear_conversation
     
     if scope == "all":
+        # Only admins can clear ALL server memory
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.send("❌ Hanya admin yang bisa hapus semua memory server! Gunakan `!clear` untuk hapus channel ini saja.")
+            return
         clear_conversation(ctx.guild.id)
         await ctx.send("🧹 Semua memory percakapan di server ini sudah dihapus!")
     else:
