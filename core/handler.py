@@ -928,6 +928,35 @@ SEND_MESSAGE_TOOL = {
 
 
 
+
+AUDIT_LOG_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_audit_log",
+        "description": (
+            "Get Discord server audit log. Shows who kicked/banned members, "
+            "deleted messages, changed roles, etc. "
+            "Use when asked: siapa yang kick, cek audit log, history moderasi, "
+            "siapa yang hapus pesan, dll."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string",
+                    "enum": ["all", "kick", "ban", "unban", "message_delete", "role_update", "channel_create", "member_update"],
+                    "description": "Type of action to filter. Default: all"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of entries to fetch (default: 10, max: 25)"
+                }
+            },
+            "required": []
+        }
+    }
+}
+
 INVITE_USER_TOOL = {
     "type": "function",
     "function": {
@@ -1000,7 +1029,7 @@ TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
     CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
-    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL, MODERATE_MEMBER_TOOL, INVITE_USER_TOOL,
+    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL, MODERATE_MEMBER_TOOL, INVITE_USER_TOOL, AUDIT_LOG_TOOL,
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
 
@@ -1381,6 +1410,18 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
 
 
 
+
+    # ── GET AUDIT LOG ──
+    elif tool_name == "get_audit_log":
+        action_type = tool_args.get("action_type", "all")
+        limit = min(tool_args.get("limit", 10), 25)
+        log.info(f"📋 Tool: get_audit_log({action_type}, limit={limit})")
+        return json.dumps({
+            "type": "audit_log",
+            "action_type": action_type,
+            "limit": limit
+        })
+
     # ── INVITE USER ──
     elif tool_name == "invite_user":
         target = tool_args.get("target_name", "")
@@ -1708,7 +1749,7 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict):
                     action_type = result_data.get("type")
-                    if action_type in ("download", "image", "upload_file", "reminder", "send_message", "get_server_info", "moderate", "invite"):
+                    if action_type in ("download", "image", "upload_file", "reminder", "send_message", "get_server_info", "moderate", "invite", "audit_log"):
                         pending_actions.append(result_data)
             except (json.JSONDecodeError, TypeError):
                 pass

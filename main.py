@@ -799,6 +799,8 @@ async def on_message(message: discord.Message):
                 await execute_moderate_action(message, action)
             elif action_type == "invite":
                 await execute_invite_action(message, action)
+            elif action_type == "audit_log":
+                await execute_audit_log_action(message, action)
             elif action_type == "get_server_info":
                 info_text = await execute_get_server_info_action(message, action)
                 await message.channel.send(info_text)
@@ -809,6 +811,57 @@ async def on_message(message: discord.Message):
 # HELPERS
 # ============================================================
 
+
+
+
+async def execute_audit_log_action(message, action_data):
+    """Fetch and display Discord audit log"""
+    import discord
+    action_type = action_data.get("action_type", "all")
+    limit = action_data.get("limit", 10)
+
+    action_map = {
+        "kick": discord.AuditLogAction.kick,
+        "ban": discord.AuditLogAction.ban,
+        "unban": discord.AuditLogAction.unban,
+        "message_delete": discord.AuditLogAction.message_delete,
+        "role_update": discord.AuditLogAction.role_update,
+        "channel_create": discord.AuditLogAction.channel_create,
+        "member_update": discord.AuditLogAction.member_update,
+    }
+
+    try:
+        kwargs = {"limit": limit}
+        if action_type != "all" and action_type in action_map:
+            kwargs["action"] = action_map[action_type]
+
+        entries = []
+        async for entry in message.guild.audit_logs(**kwargs):
+            entries.append(entry)
+
+        if not entries:
+            await message.channel.send("Tidak ada audit log yang ditemukan.")
+            return
+
+        lines_out = ["**Audit Log Server** (last " + str(len(entries)) + " entries):"]
+        for e in entries:
+            user = e.user.display_name if e.user else "Unknown"
+            target = str(e.target) if e.target else "-"
+            action_name = str(e.action).replace("AuditLogAction.", "")
+            time_str = e.created_at.strftime("%d/%m %H:%M")
+            reason = " | Reason: " + str(e.reason) if e.reason else ""
+            lines_out.append("`" + time_str + "` **" + user + "** > " + action_name + " > **" + target + "**" + reason)
+
+        result = "\n".join(lines_out)
+        if len(result) > 1900:
+            result = result[:1900] + "\n... (trimmed)"
+
+        await message.channel.send(result)
+
+    except discord.Forbidden:
+        await message.channel.send("Bot tidak punya permission View Audit Log.")
+    except Exception as e:
+        await message.channel.send("Error: " + str(e))
 
 
 async def execute_invite_action(message, action_data):
