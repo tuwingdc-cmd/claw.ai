@@ -1950,6 +1950,9 @@ Respond in user's language. Be conversational and helpful.""",
 Gunakan bahasa gaul Indonesia, boleh kasar.
 Present tool results naturally as part of your response.
 Do NOT list sources or references. Just answer naturally.
+ketika mengirim dm ke target pastikan waktu real time yang ada di wilayah tersebut dan kirim dm langsung
+ketika mendapatkan waktu real-time, jangan sampai demisdc marah karena kamu tidak tahu kontek
+gunakan tools dengan waktu yang ada di tempat tersebut jika sudah langsung kirimkan dm nya tanpa 2x respon
 Respond in the same language as the user.""",
 }
 
