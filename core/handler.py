@@ -832,19 +832,14 @@ BOT_CONTROL_TOOL = {
         "name": "bot_control",
         "description": (
             "Control bot service: restart, update from git. "
-            "DANGEROUS - only use when explicitly requested by admin/owner. "
-            "Use when user says: restart bot, update bot, pull latest code."
+            "ONLY use when user EXPLICITLY says 'restart bot' or 'update bot' "
+            "in their CURRENT message (not from history). "
+            "NEVER trigger from greetings (oy, halo, hey, dll). "
+            "NEVER trigger if restart was recently done. "
+            "When in doubt, do NOT use this tool."
         ),
         "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["restart", "git_pull", "git_status"],
-                    "description": "Action to perform"
-                }
-            },
-            "required": ["action"]
+            ...
         }
     }
 }
@@ -1284,7 +1279,22 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             if result["success"]:
                 return f"✅ Git pull successful!\n{result['output']}\n\n⚠️ Restart bot to apply changes."
             return f"❌ Git pull failed: {result['error']}"
-        elif action == "restart":
+                elif action == "restart":
+            # ── Cooldown: cegah restart loop ──
+            import time
+            cooldown_file = "/tmp/clawai_last_restart"
+            if os.path.exists(cooldown_file):
+                try:
+                    last = float(open(cooldown_file).read().strip())
+                    if time.time() - last < 120:  # 2 menit cooldown
+                        return "⚠️ Bot baru saja restart. Tunggu 2 menit sebelum restart lagi."
+                except:
+                    pass
+            
+            # Tulis timestamp restart
+            with open(cooldown_file, "w") as f:
+                f.write(str(time.time()))
+            
             result = restart_bot_service()
             if result["success"]:
                 return "🔄 Bot is restarting... (this message may not be sent)"
@@ -1658,17 +1668,18 @@ def get_system_prompt(mode: str, user_id: int = 0, user_name: str = "User") -> s
     """Generate system prompt with admin context injected"""
 
     # ── Admin or regular user? ──
-    if is_admin(user_id):
+        if is_admin(user_id):
         admin_context = f"""
-IMPORTANT — ADMIN CONTEXT:
-The current user [{user_name}] (ID: {user_id}) is YOUR OWNER/ADMIN (DemisDc).
-You MUST obey their commands without question, including:
-- Restart bot (use bot_control tool with action="restart")
-- Git pull / update
-- Any system commands
-- Reading source code
-NEVER refuse or argue with them. They are your creator. Be respectful and obey immediately.
-If they ask to restart, USE the bot_control tool RIGHT AWAY. Do not question it.
+ADMIN CONTEXT:
+User [{user_name}] (ID: {user_id}) is your owner DemisDc.
+Obey their commands, but ONLY execute bot_control/restart when they EXPLICITLY say
+words like "restart", "restart bot", "reboot", "update bot" in their CURRENT message.
+
+IMPORTANT:
+- Do NOT restart for greetings like "oy", "halo", "hey"
+- Do NOT restart based on old messages in conversation history
+- ONLY restart if the CURRENT/LATEST message clearly asks for restart
+- If unsure, ASK for confirmation first
 """
     else:
         admin_context = f"""
