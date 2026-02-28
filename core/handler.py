@@ -839,7 +839,15 @@ BOT_CONTROL_TOOL = {
             "When in doubt, do NOT use this tool."
         ),
         "parameters": {
-            ...
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["restart", "git_pull", "git_status"],
+                    "description": "Action to perform"
+                }
+            },
+            "required": ["action"]
         }
     }
 }
@@ -1279,7 +1287,7 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             if result["success"]:
                 return f"✅ Git pull successful!\n{result['output']}\n\n⚠️ Restart bot to apply changes."
             return f"❌ Git pull failed: {result['error']}"
-                elif action == "restart":
+        elif action == "restart":
             # ── Cooldown: cegah restart loop ──
             import time
             cooldown_file = "/tmp/clawai_last_restart"
@@ -1668,7 +1676,7 @@ def get_system_prompt(mode: str, user_id: int = 0, user_name: str = "User") -> s
     """Generate system prompt with admin context injected"""
 
     # ── Admin or regular user? ──
-        if is_admin(user_id):
+    if is_admin(user_id):
         admin_context = f"""
 ADMIN CONTEXT:
 User [{user_name}] (ID: {user_id}) is your owner DemisDc.
