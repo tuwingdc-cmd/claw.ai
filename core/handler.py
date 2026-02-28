@@ -25,6 +25,18 @@ log = logging.getLogger(__name__)
 MEMORY_EXPIRE_MINUTES = 0
 
 # ============================================================
+# ADMIN / OWNER IDS
+# ============================================================
+
+ADMIN_IDS = {
+    1307489983359357019,  # DemisDc / 🐈
+    # Tambah ID admin lain di sini kalau perlu
+}
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+# ============================================================
 # REQUEST LOGS
 # ============================================================
 
@@ -156,7 +168,6 @@ async def do_translate(text: str, target_lang: str, style: str = "natural") -> s
 # ============================================================
 
 def _detect_platform(url: str) -> str:
-    """Detect platform from URL"""
     url_lower = url.lower()
     if "twitter.com" in url_lower or "x.com" in url_lower:
         return "twitter"
@@ -173,7 +184,6 @@ def _detect_platform(url: str) -> str:
     return "generic"
 
 def _extract_youtube_id(url: str) -> Optional[str]:
-    """Extract YouTube video ID from URL"""
     patterns = [
         r'(?:v=|/v/|youtu\.be/)([a-zA-Z0-9_-]{11})',
         r'(?:shorts/)([a-zA-Z0-9_-]{11})',
@@ -185,7 +195,6 @@ def _extract_youtube_id(url: str) -> Optional[str]:
     return None
 
 async def _fetch_via_jina(url: str) -> Optional[str]:
-    """Fetch URL content via Jina Reader — works for most websites"""
     try:
         jina_url = f"https://r.jina.ai/{url}"
         headers = {
@@ -194,8 +203,7 @@ async def _fetch_via_jina(url: str) -> Optional[str]:
         }
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                jina_url,
-                headers=headers,
+                jina_url, headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20)
             ) as resp:
                 if resp.status == 200:
@@ -211,44 +219,36 @@ async def _fetch_via_jina(url: str) -> Optional[str]:
     return None
 
 async def _fetch_via_bs4(url: str) -> Optional[str]:
-    """Fallback: fetch with requests + BeautifulSoup"""
     try:
         from bs4 import BeautifulSoup
     except ImportError:
         log.warning("beautifulsoup4 not installed")
         return None
-
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url,
-                headers=headers,
+                url, headers=headers,
                 timeout=aiohttp.ClientTimeout(total=15),
                 allow_redirects=True
             ) as resp:
                 if resp.status == 200:
                     html = await resp.text()
                     soup = BeautifulSoup(html, "html.parser")
-
                     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
                         tag.decompose()
-
                     article = soup.find("article")
                     if article:
                         text = article.get_text(separator="\n", strip=True)
                     else:
                         main = soup.find("main") or soup.find("body")
                         text = main.get_text(separator="\n", strip=True) if main else ""
-
                     lines = [line.strip() for line in text.split("\n") if line.strip()]
                     text = "\n".join(lines)
-
                     if len(text) > 6000:
                         text = text[:6000] + "\n\n[... content trimmed ...]"
-
                     if len(text) > 100:
                         log.info(f"📄 BS4 fetch OK: {url[:60]}")
                         return text
@@ -257,19 +257,11 @@ async def _fetch_via_bs4(url: str) -> Optional[str]:
     return None
 
 async def _fetch_twitter(url: str) -> Optional[str]:
-    """Fetch Twitter/X content via Nitter proxies or Jina"""
-    nitter_instances = [
-        "nitter.net",
-        "nitter.privacydev.net",
-        "nitter.poast.org",
-    ]
-
+    nitter_instances = ["nitter.net", "nitter.privacydev.net", "nitter.poast.org"]
     match = re.search(r'(?:twitter\.com|x\.com)/(\w+)/status/(\d+)', url)
     if not match:
         return await _fetch_via_jina(url)
-
     username, tweet_id = match.group(1), match.group(2)
-
     for instance in nitter_instances:
         try:
             nitter_url = f"https://{instance}/{username}/status/{tweet_id}"
@@ -278,21 +270,16 @@ async def _fetch_twitter(url: str) -> Optional[str]:
                 return f"[Tweet from @{username}]\n\n{content}"
         except:
             continue
-
     content = await _fetch_via_jina(url)
     if content:
         return f"[Tweet from @{username}]\n\n{content}"
-
     return None
 
 async def _fetch_youtube_transcript(url: str) -> Optional[str]:
-    """Fetch YouTube video info + transcript"""
     video_id = _extract_youtube_id(url)
     if not video_id:
         return None
-
     parts = []
-
     try:
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
         async with aiohttp.ClientSession() as session:
@@ -303,47 +290,34 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
                     parts.append(f"Channel: {data.get('author_name', 'Unknown')}")
     except:
         pass
-
     try:
         import yt_dlp
-
         def _get_info():
             ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "skip_download": True,
-                "writeautomaticsub": True,
-                "subtitleslangs": ["id", "en"],
+                "quiet": True, "no_warnings": True, "skip_download": True,
+                "writeautomaticsub": True, "subtitleslangs": ["id", "en"],
                 "subtitlesformat": "json3",
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(url, download=False)
-
         info = await asyncio.get_event_loop().run_in_executor(None, _get_info)
-
         if info:
             if not parts:
                 parts.append(f"Title: {info.get('title', 'Unknown')}")
                 parts.append(f"Channel: {info.get('channel', info.get('uploader', 'Unknown'))}")
-
             duration = info.get("duration", 0)
             if duration:
                 mins, secs = divmod(duration, 60)
                 parts.append(f"Duration: {int(mins)}:{int(secs):02d}")
-
             view_count = info.get("view_count")
             if view_count:
                 parts.append(f"Views: {view_count:,}")
-
             desc = info.get("description", "")
             if desc:
                 parts.append(f"Description: {desc[:500]}")
-
             subtitles = info.get("subtitles", {})
             auto_subs = info.get("automatic_captions", {})
-
             transcript_text = None
-
             for sub_source in [subtitles, auto_subs]:
                 for lang in ["id", "en"]:
                     if lang in sub_source:
@@ -370,41 +344,31 @@ async def _fetch_youtube_transcript(url: str) -> Optional[str]:
                             break
                 if transcript_text:
                     break
-
             if transcript_text:
                 if len(transcript_text) > 5000:
                     transcript_text = transcript_text[:5000] + "... [trimmed]"
                 parts.append(f"\nTranscript:\n{transcript_text}")
-
             log.info(f"🎬 YouTube info OK: {video_id}")
             return "\n".join(parts)
-
     except ImportError:
         log.warning("yt-dlp not installed, falling back to Jina")
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
-
     jina_content = await _fetch_via_jina(url)
     if jina_content:
         if parts:
             return "\n".join(parts) + "\n\n" + jina_content
         return jina_content
-
     return "\n".join(parts) if parts else None
 
 async def _get_video_download_url(url: str) -> Optional[dict]:
-    """Download video langsung pakai yt-dlp dengan Instagram proxy fallback"""
-
     original_url = url
     platform = _detect_platform(url)
-
-    # ── INSTAGRAM: Coba proxy dulu karena sering butuh login ──
     if platform == "instagram":
         proxy_services = [
             ("ddinstagram.com", url.replace("instagram.com", "ddinstagram.com")),
             ("imginn.com", None),
         ]
-
         for service_name, proxy_url in proxy_services:
             if not proxy_url:
                 continue
@@ -412,35 +376,24 @@ async def _get_video_download_url(url: str) -> Optional[dict]:
             result = await _try_ytdlp_download(proxy_url, original_url)
             if result:
                 return result
-
         log.info("📱 Trying direct Instagram (may need cookies)")
         result = await _try_ytdlp_download(url, original_url)
         if result:
             return result
-
         return None
-
-    # ── Platform lain: langsung yt-dlp ──
     return await _try_ytdlp_download(url, original_url)
 
-
 async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[dict]:
-    """Actual yt-dlp download attempt"""
     try:
         import yt_dlp
-
         def _download_direct():
             temp_dir = tempfile.mkdtemp()
             output_path = os.path.join(temp_dir, "video.mp4")
-
             ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
+                "quiet": True, "no_warnings": True,
                 "format": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/best[height<=1440][ext=mp4]/best[ext=mp4]/best",
-                "outtmpl": output_path,
-                "merge_output_format": "mp4",
-                "socket_timeout": 30,
-                "retries": 3,
+                "outtmpl": output_path, "merge_output_format": "mp4",
+                "socket_timeout": 30, "retries": 3,
                 "cookiefile": "/root/claw.ai/cookies.txt",
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -448,102 +401,73 @@ async def _try_ytdlp_download(url: str, original_url: str = None) -> Optional[di
                     "Accept-Language": "en-US,en;q=0.5",
                 },
             }
-
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-
                 actual_path = output_path
                 if not os.path.exists(actual_path):
                     for f in os.listdir(temp_dir):
                         actual_path = os.path.join(temp_dir, f)
                         break
-
                 if not os.path.exists(actual_path):
                     return None
-
                 title = info.get("title", "video")[:50]
                 clean_title = re.sub(r'[^\w\s-]', '', title).strip()
                 clean_title = re.sub(r'\s+', '_', clean_title) or "video"
-
                 return {
-                    "local_path": actual_path,
-                    "temp_dir": temp_dir,
-                    "filename": f"{clean_title}.mp4",
-                    "status": "local",
+                    "local_path": actual_path, "temp_dir": temp_dir,
+                    "filename": f"{clean_title}.mp4", "status": "local",
                     "filesize": os.path.getsize(actual_path),
                     "title": info.get("title", ""),
                     "uploader": info.get("uploader", info.get("channel", "")),
                     "duration": info.get("duration", 0),
                     "original_url": original_url or url,
                 }
-
         result = await asyncio.get_event_loop().run_in_executor(None, _download_direct)
         if result and result.get("local_path") and os.path.exists(result["local_path"]):
             log.info(f"🎬 yt-dlp OK: {result['filename']} ({result.get('filesize', 0) / 1_000_000:.1f}MB)")
             return result
-
     except Exception as e:
         log.warning(f"yt-dlp error: {e}")
-
     return None
 
 async def do_fetch_url(url: str, action: str = "read") -> str:
-    """Universal URL fetcher — read content or get download URL"""
     platform = _detect_platform(url)
-
     log.info(f"📄 Fetching URL: {url[:80]} | platform={platform} | action={action}")
-
-    # ── DOWNLOAD ACTION ──
     if action == "download":
         download_info = await _get_video_download_url(url)
         if download_info and download_info.get("status") == "local":
             return json.dumps({
-                "type": "download",
-                "local_path": download_info["local_path"],
+                "type": "download", "local_path": download_info["local_path"],
                 "temp_dir": download_info["temp_dir"],
                 "filename": download_info.get("filename", "video.mp4"),
-                "platform": platform,
-                "original_url": url,
-                "method": "local",
+                "platform": platform, "original_url": url, "method": "local",
                 "title": download_info.get("title", ""),
                 "uploader": download_info.get("uploader", ""),
             })
         return "Cannot download video from this URL. The content might be protected, require login, or not a video."
-
-    # ── READ/SUMMARIZE ACTION ──
     content = None
-
     if platform == "twitter":
         content = await _fetch_twitter(url)
-
     elif platform == "youtube":
         content = await _fetch_youtube_transcript(url)
-
     elif platform in ("tiktok", "instagram", "reddit"):
         content = await _fetch_via_jina(url)
-
     elif platform == "github":
         content = await _fetch_via_jina(url)
-
-    # Generic / fallback
     if not content:
         content = await _fetch_via_jina(url)
-
     if not content:
         content = await _fetch_via_bs4(url)
-
     if not content:
         return (
             f"Cannot access content from {url}. "
             f"Possible reasons: website requires login, anti-bot protection, "
             f"or content is not publicly accessible."
         )
-
     return f"[Content from {platform}: {url}]\n\n{content}"
 
-
 # ============================================================
-# TOOL DEFINITIONS (8 Tools)
+# TOOL DEFINITIONS
 # ============================================================
 
 WEB_SEARCH_TOOL = {
@@ -768,7 +692,7 @@ GENERATE_IMAGE_TOOL = {
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Image description in English. Be detailed for better results. Example: 'a cute cat wearing astronaut suit floating in space, digital art, high quality'"
+                    "description": "Image description in English. Be detailed for better results."
                 },
                 "size": {
                     "type": "string",
@@ -831,7 +755,6 @@ CREATE_DOCUMENT_TOOL = {
     }
 }
 
-
 GET_SERVER_INFO_TOOL = {
     "type": "function",
     "function": {
@@ -870,7 +793,7 @@ SYSTEM_STATUS_TOOL = {
                 "check_type": {
                     "type": "string",
                     "enum": ["full", "errors", "logs", "resources", "git"],
-                    "description": "Type of check. full=complete report, errors=recent errors only, logs=recent logs, resources=CPU/memory/disk, git=git status"
+                    "description": "Type of check."
                 },
                 "log_lines": {
                     "type": "integer",
@@ -909,7 +832,7 @@ BOT_CONTROL_TOOL = {
         "name": "bot_control",
         "description": (
             "Control bot service: restart, update from git. "
-            "DANGEROUS - only use when explicitly requested by admin. "
+            "DANGEROUS - only use when explicitly requested by admin/owner. "
             "Use when user says: restart bot, update bot, pull latest code."
         ),
         "parameters": {
@@ -940,51 +863,31 @@ SET_REMINDER_TOOL = {
             "• 'Reminder meeting tiap hari jam 9' → trigger_type='daily', trigger_time='09:00'\n"
             "• 'Ingatkan dengan play musik lofi' → actions=[{type:'music', action:'play', query:'lofi'}]\n"
             "• 'DM saya reminder meeting' → actions=[{type:'dm', message:'Meeting!'}]\n"
-            "• 'Alarm sahur jam 3, DM dan play Quran' → trigger_time='03:00', actions=[{type:'dm'}, {type:'music', query:'quran recitation'}]\n"
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "Reminder message content"
-                },
+                "message": {"type": "string", "description": "Reminder message content"},
                 "trigger_type": {
                     "type": "string",
                     "enum": ["minutes", "once", "daily", "weekly"],
-                    "description": "Type: minutes=after X min, once=one time at specific time, daily=every day, weekly=every week"
+                    "description": "Type: minutes=after X min, once=one time, daily=every day, weekly=every week"
                 },
-                "minutes": {
-                    "type": "integer",
-                    "description": "Minutes from now (for trigger_type='minutes'). Range: 1-10080 (max 7 days)"
-                },
-                "trigger_time": {
-                    "type": "string",
-                    "description": "Time in HH:MM (24h format). e.g. '15:00' for 3PM, '03:00' for 3AM"
-                },
-                "timezone": {
-                    "type": "string",
-                    "description": "Timezone. Default: Asia/Jakarta"
-                },
-                "target_user": {
-                    "type": "string",
-                    "description": "Display name of user to remind. If not specified, remind the user who asked. e.g. 'Ys.', 'Liffy', 'DemisDc'"
-                },
+                "minutes": {"type": "integer", "description": "Minutes from now (for trigger_type='minutes'). Range: 1-10080"},
+                "trigger_time": {"type": "string", "description": "Time in HH:MM (24h format). e.g. '15:00'"},
+                "timezone": {"type": "string", "description": "Timezone. Default: Asia/Jakarta"},
+                "target_user": {"type": "string", "description": "Display name of user to remind. If not specified, remind the requester."},
                 "actions": {
                     "type": "array",
                     "description": "Additional actions when reminder triggers",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["dm", "music", "channel_message"],
-                                "description": "dm=DM user, music=play music, channel_message=send to another channel"
-                            },
-                            "message": {"type": "string", "description": "Custom message for dm/channel_message"},
-                            "action": {"type": "string", "description": "For music: 'play'"},
-                            "query": {"type": "string", "description": "For music: search query"},
-                            "channel": {"type": "string", "description": "For channel_message: channel name"}
+                            "type": {"type": "string", "enum": ["dm", "music", "channel_message"]},
+                            "message": {"type": "string"},
+                            "action": {"type": "string"},
+                            "query": {"type": "string"},
+                            "channel": {"type": "string"}
                         }
                     }
                 }
@@ -1011,18 +914,9 @@ SEND_MESSAGE_TOOL = {
                     "enum": ["dm", "channel"],
                     "description": "Where to send: 'dm' for Direct Message, 'channel' for another channel"
                 },
-                "target_user": {
-                    "type": "string",
-                    "description": "Display name of the user to DM. If not specified, DM the user who asked. e.g. 'Ys.', 'Liffy', 'DemisDc'"
-                },
-                "channel_name": {
-                    "type": "string",
-                    "description": "Channel name (without #) if destination is 'channel'. e.g. 'general', 'bot-spam'"
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Message content to send"
-                }
+                "target_user": {"type": "string", "description": "Display name of user to DM. If not specified, DM the requester."},
+                "channel_name": {"type": "string", "description": "Channel name (without #) if destination is 'channel'."},
+                "message": {"type": "string", "description": "Message content to send"}
             },
             "required": ["destination"]
         }
@@ -1033,10 +927,9 @@ TOOLS_LIST = [
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_WEATHER_TOOL, GET_FORECAST_TOOL,
     CALCULATE_TOOL, TRANSLATE_TOOL, PLAY_MUSIC_TOOL, FETCH_URL_TOOL,
     GENERATE_IMAGE_TOOL, CREATE_DOCUMENT_TOOL, SET_REMINDER_TOOL,
-    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL,  # <-- TAMBAH
+    SEND_MESSAGE_TOOL, GET_SERVER_INFO_TOOL,
     SYSTEM_STATUS_TOOL, READ_SOURCE_TOOL, BOT_CONTROL_TOOL
 ]
-
 
 # ============================================================
 # MODE DETECTOR
@@ -1055,13 +948,11 @@ class ModeDetector:
             if kw in lower: return "reasoning"
         return "normal"
 
-
 # ============================================================
-# TOOL CALL EXECUTOR — 8 Tools
+# TOOL CALL EXECUTOR
 # ============================================================
 
 async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
-    """Eksekusi tool yang diminta AI"""
 
     # ── WEB SEARCH ──
     if tool_name == "web_search":
@@ -1179,54 +1070,36 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         prompt = tool_args.get("prompt", "")
         size = tool_args.get("size", "square")
         log.info(f"🖼️ Tool: generate_image(prompt={prompt[:50]}, size={size})")
-
-        size_map = {
-            "square": (1024, 1024),
-            "wide": (1280, 720),
-            "tall": (720, 1280),
-        }
+        size_map = {"square": (1024, 1024), "wide": (1280, 720), "tall": (720, 1280)}
         w, h = size_map.get(size, (1024, 1024))
-
         image_url = f"https://image.pollinations.ai/prompt/{prompt}?width={w}&height={h}&nologo=true&seed={int(datetime.now().timestamp())}"
+        return json.dumps({"type": "image", "image_url": image_url, "prompt": prompt, "size": size})
 
-        return json.dumps({
-            "type": "image",
-            "image_url": image_url,
-            "prompt": prompt,
-            "size": size,
-        })
-        
-            # ── CREATE DOCUMENT ──
+    # ── CREATE DOCUMENT ──
     elif tool_name == "create_document":
         file_type = tool_args.get("file_type", "txt")
         filename = tool_args.get("filename", f"document.{file_type}")
         title = tool_args.get("title", "")
         content = tool_args.get("content", "")
         log.info(f"📄 Tool: create_document({filename})")
-        
         result = await create_document(file_type, filename, content, title)
         if result:
             return json.dumps(result)
         return f"Failed to create {filename}"
 
-        # ── SET REMINDER ──
+    # ── SET REMINDER ──
     elif tool_name == "set_reminder":
         from core.database import create_reminder
-        
         message = tool_args.get("message", "Reminder!")
         trigger_type = tool_args.get("trigger_type", "minutes")
         minutes = tool_args.get("minutes")
         trigger_time = tool_args.get("trigger_time")
         timezone = tool_args.get("timezone", "Asia/Jakarta")
         actions = tool_args.get("actions", [])
-        
-        # Get context
         guild_id = tool_args.get("_guild_id", 0)
         channel_id = tool_args.get("_channel_id", 0)
         user_id = tool_args.get("_user_id", 0)
         user_name = tool_args.get("_user_name", "User")
-        
-        # Auto-detect trigger_type
         if minutes and trigger_type == "minutes":
             pass
         elif trigger_time and trigger_type == "minutes":
@@ -1234,9 +1107,7 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         elif not minutes and not trigger_time:
             minutes = 5
             trigger_type = "minutes"
-        
         log.info(f"⏰ Tool: set_reminder(type={trigger_type}, msg={message[:30]}, actions={len(actions)})")
-        
         try:
             import pytz
             tz = pytz.timezone(timezone)
@@ -1244,38 +1115,23 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             import pytz
             tz = pytz.timezone("Asia/Jakarta")
             timezone = "Asia/Jakarta"
-        
         now = datetime.now(tz)
-        
-        # Resolve target user
         target_user_name = tool_args.get("target_user", "")
         target_user_id = None
-        
-        # Try to find target user ID from server info
         if target_user_name:
             server_info = tool_args.get("_server_info", {})
             all_members = server_info.get("all_members", [])
             log.info(f"⏰ Looking for target user: '{target_user_name}' in {len(all_members)} members")
-        
-        # Create reminder in database (persistent!)
         reminder_id = create_reminder(
-            guild_id=guild_id,
-            channel_id=channel_id,
-            user_id=user_id,
-            user_name=user_name,
-            message=message,
-            trigger_type=trigger_type,
-            trigger_time=trigger_time,
-            trigger_minutes=minutes,
-            timezone=timezone,
-            actions=actions,
+            guild_id=guild_id, channel_id=channel_id,
+            user_id=user_id, user_name=user_name,
+            message=message, trigger_type=trigger_type,
+            trigger_time=trigger_time, trigger_minutes=minutes,
+            timezone=timezone, actions=actions,
             target_user_id=target_user_id,
             target_user_name=target_user_name if target_user_name else None
         )
-        
-        # Calculate display time
         if trigger_type == "minutes" and minutes:
-            from datetime import timedelta
             trigger_display = (now + timedelta(minutes=minutes)).strftime("%H:%M:%S")
             type_display = f"{minutes} menit dari sekarang"
         elif trigger_time:
@@ -1284,8 +1140,6 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         else:
             trigger_display = "soon"
             type_display = trigger_type
-        
-        # Build action descriptions
         action_descs = []
         for a in actions:
             if a.get("type") == "dm":
@@ -1294,18 +1148,14 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                 action_descs.append(f"🎵 Play: {a.get('query', 'music')[:20]}")
             elif a.get("type") == "channel_message":
                 action_descs.append(f"📢 #{a.get('channel', '?')}")
-        
         actions_text = ", ".join(action_descs) if action_descs else "📢 mention di channel"
-        
-        return f"✅ Reminder #{reminder_id} berhasil dibuat!\n" \
-               f"📝 Pesan: {message}\n" \
-               f"⏰ Waktu: {trigger_display} ({type_display})\n" \
-               f"🔔 Aksi: {actions_text}\n" \
-               f"🌏 Timezone: {timezone}"
-
-    # ══════════════════════════════════════════
-    # TARUH DI SINI ↓↓↓
-    # ══════════════════════════════════════════
+        return (
+            f"✅ Reminder #{reminder_id} berhasil dibuat!\n"
+            f"📝 Pesan: {message}\n"
+            f"⏰ Waktu: {trigger_display} ({type_display})\n"
+            f"🔔 Aksi: {actions_text}\n"
+            f"🌏 Timezone: {timezone}"
+        )
 
     # ── SEND MESSAGE ──
     elif tool_name == "send_message":
@@ -1313,52 +1163,37 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
         channel_name = tool_args.get("channel_name", "")
         msg_content = tool_args.get("message", "")
         target_user = tool_args.get("target_user", "")
-        
         log.info(f"📤 Tool: send_message(dest={destination}, target={target_user}, channel={channel_name})")
-        
         return json.dumps({
-            "type": "send_message",
-            "destination": destination,
-            "channel_name": channel_name,
-            "message": msg_content,
+            "type": "send_message", "destination": destination,
+            "channel_name": channel_name, "message": msg_content,
             "target_user": target_user,
         })
-
-    # ══════════════════════════════════════════
-    # AKHIR TAMBAHAN ↑↑↑
-    # ══════════════════════════════════════════
-
 
     # ── GET SERVER INFO ──
     elif tool_name == "get_server_info":
         info_type = tool_args.get("info_type", "all")
         server_info = tool_args.get("_server_info", {})
-        log.info(f"👥 Tool: get_server_info({info_type}) | has_data={bool(server_info)} | members={len(server_info.get('all_members', []))}")
-        
+        log.info(f"👥 Tool: get_server_info({info_type}) | has_data={bool(server_info)}")
         if not server_info:
-            return "Server info tidak tersedia. Bot mungkin tidak memiliki akses ke member list."
-        
+            return "Server info tidak tersedia."
         lines = []
         server_name = server_info.get("server_name", "Unknown")
         total = server_info.get("total_members", 0)
         lines.append(f"Server: {server_name} | Total: {total} members")
-        
         if info_type in ("members", "all"):
             all_members = server_info.get("all_members", [])
             online = server_info.get("online_members", [])
-            
             if all_members:
                 lines.append(f"\nSemua Member ({len(all_members)} orang, non-bot):")
                 for m in all_members:
                     lines.append(f"  {m}")
-            
             if online:
                 lines.append(f"\nYang Online ({len(online)}):")
                 for m in online:
                     lines.append(f"  {m}")
             else:
                 lines.append("\nTidak ada member yang online saat ini.")
-        
         if info_type in ("voice", "all"):
             voice = server_info.get("voice_channels", [])
             lines.append("\nVoice Channels:")
@@ -1367,29 +1202,22 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                     lines.append(f"  {v}")
             else:
                 lines.append("  Tidak ada voice channel.")
-        
         if info_type in ("channels", "all"):
             channels = server_info.get("text_channels", [])
             lines.append(f"\nText Channels ({len(channels)}):")
             for ch in channels:
                 lines.append(f"  {ch}")
-        
-        result = "\n".join(lines)
-        log.info(f"👥 Returning: {result[:200]}")
-        return result
+        return "\n".join(lines)
 
     # ── SYSTEM STATUS ──
     elif tool_name == "system_status":
         from skills.system_skill import (
-            format_system_report, format_error_report, 
+            format_system_report, format_error_report,
             get_recent_logs, get_system_status, get_git_status
         )
-        
         check_type = tool_args.get("check_type", "full")
         log_lines = tool_args.get("log_lines", 30)
-        
         log.info(f"🖥️ Tool: system_status({check_type})")
-        
         if check_type == "full":
             return format_system_report()
         elif check_type == "errors":
@@ -1419,28 +1247,29 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                     f"Status: {result['status']}"
                 )
             return f"Failed: {result['error']}"
-        
         return format_system_report()
 
     # ── READ SOURCE ──
     elif tool_name == "read_source":
         from skills.system_skill import read_bot_file
-        
         filename = tool_args.get("filename", "main.py")
         log.info(f"📄 Tool: read_source({filename})")
-        
         result = read_bot_file(filename)
         if result["success"]:
             return f"File: {result['filename']} ({result['size_bytes']} bytes)\n```python\n{result['content']}\n```"
         return f"Error: {result['error']}"
 
-    # ── BOT CONTROL ──
+    # ── BOT CONTROL (Admin only!) ──
     elif tool_name == "bot_control":
         from skills.system_skill import restart_bot_service, git_pull_update, get_git_status
-        
         action = tool_args.get("action", "git_status")
-        log.info(f"🔧 Tool: bot_control({action})")
-        
+
+        # ── Permission check ──
+        caller_id = tool_args.get("_user_id", 0)
+        if not is_admin(caller_id):
+            return "⛔ Hanya DemisDc (admin/owner) yang boleh pakai command ini."
+
+        log.info(f"🔧 Tool: bot_control({action}) by admin {caller_id}")
         if action == "git_status":
             result = get_git_status()
             if result["success"]:
@@ -1450,53 +1279,40 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
                     f"Updates available: {'Yes ⚠️' if result['has_updates'] else 'No ✅'}"
                 )
             return f"Error: {result['error']}"
-        
         elif action == "git_pull":
             result = git_pull_update()
             if result["success"]:
                 return f"✅ Git pull successful!\n{result['output']}\n\n⚠️ Restart bot to apply changes."
             return f"❌ Git pull failed: {result['error']}"
-        
         elif action == "restart":
             result = restart_bot_service()
             if result["success"]:
                 return "🔄 Bot is restarting... (this message may not be sent)"
             return f"❌ Restart failed: {result['error']}"
-        
         return f"Unknown action: {action}"
 
-    # ============ AKHIR TAMBAHAN ============
-        
     return f"Unknown tool: {tool_name}"
-
 
 # ============================================================
 # FILE READER — Read uploaded files
 # ============================================================
 
 async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
-    """Download and read content from Discord attachment"""
     try:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        
-        # ── IMAGE FILES — Return URL for vision processing ──
+
+        # ── IMAGE FILES ──
         image_extensions = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
-        
         if ext in image_extensions:
             log.info(f"🖼️ Image detected: {filename}")
-            return json.dumps({
-                "type": "image_attachment",
-                "url": file_url,
-                "filename": filename,
-            })
-        # ============ AKHIR TAMBAHAN ============
-        
+            return json.dumps({"type": "image_attachment", "url": file_url, "filename": filename})
+
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.read()
-        
+
         # ── TEXT / CODE FILES ──
         text_extensions = {
             "py", "js", "ts", "html", "css", "json", "xml", "yaml", "yml",
@@ -1505,19 +1321,16 @@ async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
             "java", "kt", "swift", "go", "rs", "c", "cpp", "h", "hpp",
             "vue", "svelte", "jsx", "tsx", "dart", "lua", "toml",
         }
-        
         if ext in text_extensions:
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError:
                 text = data.decode("latin-1")
-            
             if len(text) > 15000:
                 text = text[:15000] + "\n\n[... file trimmed, too long ...]"
-            
             log.info(f"📄 Read text file: {filename} ({len(text)} chars)")
             return f"[File: {filename}]\n```{ext}\n{text}\n```"
-        
+
         # ── PDF ──
         elif ext == "pdf":
             try:
@@ -1525,22 +1338,20 @@ async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
                 import io
                 reader = PdfReader(io.BytesIO(data))
                 pages = []
-                for i, page in enumerate(reader.pages[:20]):  # Max 20 pages
+                for i, page in enumerate(reader.pages[:20]):
                     text = page.extract_text()
                     if text:
                         pages.append(f"--- Page {i+1} ---\n{text}")
-                
                 full_text = "\n\n".join(pages)
                 if len(full_text) > 15000:
                     full_text = full_text[:15000] + "\n\n[... PDF trimmed ...]"
-                
                 log.info(f"📄 Read PDF: {filename} ({len(reader.pages)} pages)")
                 return f"[PDF: {filename} — {len(reader.pages)} pages]\n{full_text}"
             except ImportError:
-                return f"[PDF: {filename}] — pypdf not installed, cannot read PDF"
+                return f"[PDF: {filename}] — pypdf not installed"
             except Exception as e:
                 return f"[PDF: {filename}] — Error reading: {e}"
-        
+
         # ── DOCX ──
         elif ext == "docx":
             try:
@@ -1549,17 +1360,15 @@ async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
                 doc = Document(io.BytesIO(data))
                 paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
                 full_text = "\n".join(paragraphs)
-                
                 if len(full_text) > 15000:
                     full_text = full_text[:15000] + "\n\n[... document trimmed ...]"
-                
                 log.info(f"📄 Read DOCX: {filename} ({len(paragraphs)} paragraphs)")
                 return f"[Word Document: {filename}]\n{full_text}"
             except ImportError:
                 return f"[DOCX: {filename}] — python-docx not installed"
             except Exception as e:
                 return f"[DOCX: {filename}] — Error reading: {e}"
-        
+
         # ── XLSX ──
         elif ext in ("xlsx", "xls"):
             try:
@@ -1567,58 +1376,47 @@ async def read_uploaded_file(file_url: str, filename: str) -> Optional[str]:
                 import io
                 wb = load_workbook(io.BytesIO(data), read_only=True)
                 sheets_text = []
-                
-                for sheet_name in wb.sheetnames[:5]:  # Max 5 sheets
+                for sheet_name in wb.sheetnames[:5]:
                     ws = wb[sheet_name]
                     rows = []
-                    for row in ws.iter_rows(max_row=100, values_only=True):  # Max 100 rows
+                    for row in ws.iter_rows(max_row=100, values_only=True):
                         row_data = [str(cell) if cell is not None else "" for cell in row]
                         rows.append(" | ".join(row_data))
-                    
                     if rows:
                         sheets_text.append(f"[Sheet: {sheet_name}]\n" + "\n".join(rows))
-                
                 full_text = "\n\n".join(sheets_text)
                 if len(full_text) > 15000:
                     full_text = full_text[:15000] + "\n\n[... spreadsheet trimmed ...]"
-                
                 log.info(f"📄 Read XLSX: {filename} ({len(wb.sheetnames)} sheets)")
                 return f"[Excel: {filename}]\n{full_text}"
             except ImportError:
                 return f"[XLSX: {filename}] — openpyxl not installed"
             except Exception as e:
                 return f"[XLSX: {filename}] — Error reading: {e}"
-        
+
         else:
             return f"[File: {filename}] — Unsupported file type: .{ext}"
-    
+
     except Exception as e:
         log.error(f"📄 File read error: {e}")
         return f"[File: {filename}] — Error: {e}"
-
 
 # ============================================================
 # FILE CREATOR — Generate office documents
 # ============================================================
 
 async def create_document(file_type: str, filename: str, content: str, title: str = "") -> Optional[dict]:
-    """Create Word, Excel, or Code file"""
     temp_dir = tempfile.mkdtemp()
-    
     try:
         # ── WORD (.docx) ──
         if file_type == "docx":
             from docx import Document
             from docx.shared import Pt, Inches
             from docx.enum.text import WD_ALIGN_PARAGRAPH
-            
             doc = Document()
-            
             if title:
                 heading = doc.add_heading(title, level=1)
                 heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            # Parse content — support basic formatting
             lines = content.split("\n")
             for line in lines:
                 line = line.strip()
@@ -1636,38 +1434,26 @@ async def create_document(file_type: str, filename: str, content: str, title: st
                     doc.add_paragraph(re.sub(r'^\d+\.\s', '', line), style="List Number")
                 else:
                     doc.add_paragraph(line)
-            
             filepath = os.path.join(temp_dir, filename)
             doc.save(filepath)
             log.info(f"📄 Created DOCX: {filename}")
-            
-            return {
-                "type": "upload_file",
-                "local_path": filepath,
-                "temp_dir": temp_dir,
-                "filename": filename,
-            }
-        
+            return {"type": "upload_file", "local_path": filepath, "temp_dir": temp_dir, "filename": filename}
+
         # ── EXCEL (.xlsx) ──
         elif file_type == "xlsx":
             from openpyxl import Workbook
             from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-            
             wb = Workbook()
             ws = wb.active
             ws.title = title or "Sheet1"
-            
-            # Parse content as JSON array of arrays
             try:
                 rows_data = json.loads(content)
                 if not isinstance(rows_data, list):
                     rows_data = [[content]]
             except (json.JSONDecodeError, TypeError):
-                # Fallback: parse as text table
                 rows_data = []
                 for line in content.strip().split("\n"):
                     if line.strip():
-                        # Split by | or , or tab
                         if "|" in line:
                             cells = [c.strip() for c in line.split("|") if c.strip()]
                         elif "\t" in line:
@@ -1677,30 +1463,19 @@ async def create_document(file_type: str, filename: str, content: str, title: st
                         else:
                             cells = [line.strip()]
                         rows_data.append(cells)
-            
-            # Write data to worksheet
             for row_idx, row in enumerate(rows_data, 1):
                 for col_idx, value in enumerate(row, 1):
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                    
-                    # Style header row (first row)
                     if row_idx == 1:
                         cell.font = Font(bold=True, color="FFFFFF", size=11)
                         cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
                         cell.alignment = Alignment(horizontal="center", vertical="center")
                     else:
                         cell.alignment = Alignment(vertical="center")
-                    
-                    # Add border
-                    thin_border = Border(
-                        left=Side(style="thin"),
-                        right=Side(style="thin"),
-                        top=Side(style="thin"),
-                        bottom=Side(style="thin"),
+                    cell.border = Border(
+                        left=Side(style="thin"), right=Side(style="thin"),
+                        top=Side(style="thin"), bottom=Side(style="thin"),
                     )
-                    cell.border = thin_border
-            
-            # Auto-adjust column width
             for col in ws.columns:
                 max_length = 0
                 col_letter = col[0].column_letter
@@ -1711,45 +1486,30 @@ async def create_document(file_type: str, filename: str, content: str, title: st
                     except:
                         pass
                 ws.column_dimensions[col_letter].width = min(max_length + 4, 50)
-            
             filepath = os.path.join(temp_dir, filename)
             wb.save(filepath)
             log.info(f"📊 Created XLSX: {filename}")
-            
-            return {
-                "type": "upload_file",
-                "local_path": filepath,
-                "temp_dir": temp_dir,
-                "filename": filename,
-            }
-        
+            return {"type": "upload_file", "local_path": filepath, "temp_dir": temp_dir, "filename": filename}
+
         # ── CODE / TEXT FILES ──
-        elif file_type in ("py", "js", "ts", "html", "css", "json", "txt", "md", 
+        elif file_type in ("py", "js", "ts", "html", "css", "json", "txt", "md",
                            "sql", "sh", "yaml", "xml", "csv", "java", "cpp", "c",
                            "go", "rs", "rb", "php", "swift", "kt", "dart", "lua"):
             filepath = os.path.join(temp_dir, filename)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
-            
             log.info(f"💻 Created code file: {filename}")
-            
-            return {
-                "type": "upload_file",
-                "local_path": filepath,
-                "temp_dir": temp_dir,
-                "filename": filename,
-            }
-        
+            return {"type": "upload_file", "local_path": filepath, "temp_dir": temp_dir, "filename": filename}
+
         else:
             log.warning(f"Unsupported file type: {file_type}")
             shutil.rmtree(temp_dir, ignore_errors=True)
             return None
-    
+
     except Exception as e:
         log.error(f"📄 Create document error: {e}")
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None
-
 
 # ============================================================
 # TOOL CALLING HANDLER
@@ -1757,9 +1517,7 @@ async def create_document(file_type: str, filename: str, content: str, title: st
 
 async def handle_with_tools(messages: list, prov_name: str, model: str,
                              guild_id: int = 0, settings: dict = None) -> tuple:
-    """
-    Returns: (AIResponse, note_string, actions_list)
-    """
+    """Returns: (AIResponse, note_string, actions_list)"""
     from core.providers import supports_tool_calling
 
     if not supports_tool_calling(prov_name):
@@ -1801,7 +1559,14 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
-            # Capture music action manually
+            # ── Always inject user context into ALL tools ──
+            if settings:
+                fn_args["_user_id"] = settings.get("_user_id", 0)
+                fn_args["_user_name"] = settings.get("_user_name", "User")
+                fn_args["_guild_id"] = settings.get("guild_id", 0)
+                fn_args["_channel_id"] = settings.get("_channel_id", 0)
+
+            # Capture music action
             if fn_name == "play_music":
                 pending_actions.append({
                     "type": "music",
@@ -1809,21 +1574,13 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                     "query": fn_args.get("query", ""),
                 })
 
-            # Inject server info for get_server_info tool
-            if fn_name == "get_server_info" and settings:
+            # Inject server info for relevant tools
+            if fn_name in ("get_server_info", "set_reminder") and settings:
                 fn_args["_server_info"] = settings.get("server_info", {})
-            
-            # Inject context for set_reminder tool
-            if fn_name == "set_reminder" and settings:
-                fn_args["_guild_id"] = settings.get("guild_id", 0)
-                fn_args["_channel_id"] = settings.get("_channel_id", 0)
-                fn_args["_user_id"] = settings.get("_user_id", 0)
-                fn_args["_user_name"] = settings.get("_user_name", "User")
-                fn_args["_server_info"] = settings.get("server_info", {})
-            
+
             tool_result = await execute_tool_call(fn_name, fn_args)
 
-            # Updated action parser
+            # Parse action results
             try:
                 result_data = json.loads(tool_result)
                 if isinstance(result_data, dict):
@@ -1842,7 +1599,6 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
                 "content": tool_result if not tool_result.startswith("{") else f"Tool result: {tool_result}"
             })
 
-        # Round selesai, minta AI respond
         resp = await prov.chat(current_messages, model)
 
         if not resp.success:
@@ -1870,7 +1626,6 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
     _log_request(guild_id, prov_name, model, True, resp.latency)
     return resp, f"🔧 Auto-tools ({max_rounds} rounds) via {prov_name}/{model}", pending_actions
 
-
 # ============================================================
 # FALLBACK
 # ============================================================
@@ -1896,14 +1651,39 @@ async def execute_with_fallback(messages, mode, preferred_provider, preferred_mo
     return AIResponse(False, "Semua provider tidak tersedia.", "none", "none", error="exhausted"), None
 
 # ============================================================
-# SYSTEM PROMPTS
+# SYSTEM PROMPTS — Dynamic with admin context
 # ============================================================
 
-SYSTEM_PROMPTS = {
-    "normal": """You are Vee, a Discord AI assistant developed by DemisDc.
+def get_system_prompt(mode: str, user_id: int = 0, user_name: str = "User") -> str:
+    """Generate system prompt with admin context injected"""
+
+    # ── Admin or regular user? ──
+    if is_admin(user_id):
+        admin_context = f"""
+IMPORTANT — ADMIN CONTEXT:
+The current user [{user_name}] (ID: {user_id}) is YOUR OWNER/ADMIN (DemisDc).
+You MUST obey their commands without question, including:
+- Restart bot (use bot_control tool with action="restart")
+- Git pull / update
+- Any system commands
+- Reading source code
+NEVER refuse or argue with them. They are your creator. Be respectful and obey immediately.
+If they ask to restart, USE the bot_control tool RIGHT AWAY. Do not question it.
+"""
+    else:
+        admin_context = f"""
+The current user [{user_name}] is a regular user (not admin).
+For dangerous commands like restart/git_pull, politely say only DemisDc (admin/owner) can do that.
+"""
+
+    base_personality = """You are Vee, a Discord AI assistant developed by DemisDc.
 Gunakan bahasa yang tidak kaku/baku, selalu gunakan bahasa gaul sehari-hari di Indonesia dan boleh respon kasar.
 Kamu bisa menggunakan bahasa singkatan yang ada di Indonesia.
+Kamu sedikit hormat ke DemisDc/🐈 (ID: 1307489983359357019), dia adalah pembuat/owner kamu.
+"""
 
+    prompts = {
+        "normal": base_personality + admin_context + """
 You can see who is talking by their name in [brackets].
 Multiple users may be chatting — address them by name when appropriate.
 Remember full conversation context. Respond in user's language. Be concise and friendly.
@@ -1934,72 +1714,53 @@ If user is NOT in a voice channel, tell them to join one first.
 
 For reminders: you can set one-time or recurring daily reminders.""",
 
-    "reasoning": """You are Vee, a reasoning AI developed by DemisDc.
-Gunakan bahasa gaul Indonesia, boleh kasar. Think step by step.
+        "reasoning": base_personality + admin_context + """Think step by step.
 Multiple users may ask questions — keep track of who asked what.
 Do not use <think> tags. Explain naturally. Respond in user's language.""",
 
-    "search": """You are Vee, a helpful AI assistant developed by DemisDc with access to current information.
-Gunakan bahasa gaul Indonesia, boleh kasar.
+        "search": base_personality + admin_context + """You have access to current information.
 Answer the user's question naturally using the search results provided.
 Do NOT list sources, URLs, or citations. Do NOT use numbered references.
 Just incorporate the information naturally into your response.
 Respond in user's language. Be conversational and helpful.""",
 
-    "with_skill": """You are Vee, a helpful AI assistant developed by DemisDc.
-Gunakan bahasa gaul Indonesia, boleh kasar.
-Present tool results naturally as part of your response.
+        "with_skill": base_personality + admin_context + """Present tool results naturally as part of your response.
 Do NOT list sources or references. Just answer naturally.
-ketika mengirim dm ke target pastikan waktu real time yang ada di wilayah tersebut dan kirim dm langsung
-ketika mendapatkan waktu real-time, jangan sampai demisdc marah karena kamu tidak tahu kontek
-gunakan tools dengan waktu yang ada di tempat tersebut jika sudah langsung kirimkan dm nya tanpa 2x respon
-pastikan cek waktu real-time sebelum kamu kirimkan dm nya, selalu gunakan tools jika di suruh dm jangan ngarang dm sudah terkirim tapi tools tidak di gunakan
-ngerti konteks apa yang di minta jika untuk dm ke target, jangan gunakan pesan dari perintah untuk mengirimkan ke target tapi kamu yang susun kalimat nya!! 
-kamu sedikit hormat ke DemisDc/🐈 (1307489983359357019) selalu ingat id discord nya
+Ketika mengirim DM ke target, pastikan cek waktu real-time dulu pakai get_time tool.
+Selalu gunakan tools yang sesuai, jangan ngarang hasil tanpa pakai tools.
+Susun kalimat DM sendiri dengan natural, jangan copy-paste perintah user.
 Respond in the same language as the user.""",
-}
+    }
+
+    return prompts.get(mode, prompts["normal"])
 
 # ============================================================
-# VISION — Process images with AI (Dynamic from settings)
+# VISION — Process images with AI
 # ============================================================
 
 async def process_with_vision(content: str, image_urls: list, settings: dict) -> Optional[str]:
-    """Process message with image using the model from settings"""
-    
-    # Get provider & model from user settings
     mode = settings.get("active_mode", "normal")
     profile = settings.get("profiles", {}).get(mode, {})
-    
     prov_name = profile.get("provider", "pollinations")
     model_id = profile.get("model", "openai")
-    
+
     log.info(f"👁️ Vision using settings: {prov_name}/{model_id}")
-    
-    # Build message with images (OpenAI vision format)
+
     user_content = [{"type": "text", "text": content or "Describe this image / Jelaskan gambar ini"}]
-    
-    for url in image_urls[:3]:  # Max 3 images
-        user_content.append({
-            "type": "image_url",
-            "image_url": {"url": url}
-        })
-    
+    for url in image_urls[:3]:
+        user_content.append({"type": "image_url", "image_url": {"url": url}})
+
     messages = [
-        {
-            "role": "system", 
-            "content": "You are a helpful AI assistant that can see and analyze images. Respond in the same language as the user. Be detailed but concise."
-        },
+        {"role": "system", "content": "You are a helpful AI assistant that can see and analyze images. Respond in the same language as the user. Be detailed but concise."},
         {"role": "user", "content": user_content}
     ]
-    
-    # Try with user's selected provider/model first
+
     prov = ProviderFactory.get(prov_name, API_KEYS)
     if prov:
         try:
             if await prov.health_check():
                 log.info(f"👁️ Trying vision: {prov_name}/{model_id}")
                 resp = await prov.chat(messages, model_id)
-                
                 if resp.success and resp.content:
                     log.info(f"👁️ Vision success via {prov_name}/{model_id}")
                     return resp.content
@@ -2007,64 +1768,58 @@ async def process_with_vision(content: str, image_urls: list, settings: dict) ->
                     log.warning(f"👁️ Vision failed {prov_name}/{model_id}: {resp.error}")
         except Exception as e:
             log.warning(f"👁️ Vision error {prov_name}: {e}")
-    
-    # Fallback: try other vision-capable providers
+
     VISION_FALLBACKS = [
-        ("pollinations", "openai"),        # GPT-5 Mini - supports vision
-        ("pollinations", "gemini"),        # Gemini 2.5 Pro
-        ("gemini", "gemini-2.0-flash"),    # Direct Gemini
-        ("groq", "llama-4-scout-17b-16e-instruct"),  # Llama 4 Scout
+        ("pollinations", "openai"),
+        ("pollinations", "gemini"),
+        ("gemini", "gemini-2.0-flash"),
+        ("groq", "llama-4-scout-17b-16e-instruct"),
     ]
-    
     for fb_prov, fb_model in VISION_FALLBACKS:
-        # Skip if same as already tried
         if fb_prov == prov_name and fb_model == model_id:
             continue
-        
         fb_provider = ProviderFactory.get(fb_prov, API_KEYS)
         if not fb_provider:
             continue
-        
         try:
             if not await fb_provider.health_check():
                 continue
-            
             log.info(f"👁️ Fallback vision: {fb_prov}/{fb_model}")
             resp = await fb_provider.chat(messages, fb_model)
-            
             if resp.success and resp.content:
                 log.info(f"👁️ Vision success via fallback {fb_prov}/{fb_model}")
                 return resp.content
         except Exception as e:
             log.warning(f"👁️ Fallback error {fb_prov}: {e}")
             continue
-    
-    return None
 
+    return None
 
 # ============================================================
 # MAIN HANDLER
 # ============================================================
 
-async def handle_message(content: str, settings: Dict, channel_id: int = 0, user_id: int = 0, user_name: str = "User") -> Dict:
+async def handle_message(content: str, settings: Dict, channel_id: int = 0,
+                         user_id: int = 0, user_name: str = "User") -> Dict:
     mode = settings.get("active_mode", "normal")
     guild_id = settings.get("guild_id", 0)
-
     history = get_conversation(guild_id, channel_id, limit=30)
 
-        # =========================================================
+    # ── Dynamic system prompt with admin context ──
+    system_prompt = get_system_prompt(mode, user_id, user_name)
+
+    # =========================================================
     # STEP 0: Read file attachments (if any)
     # =========================================================
-    
+
     file_context = ""
     image_urls = []
     attachments_data = settings.get("attachments", [])
-    
+
     if attachments_data:
-        for att in attachments_data[:3]:  # Max 3 files
+        for att in attachments_data[:3]:
             file_content = await read_uploaded_file(att["url"], att["filename"])
             if file_content:
-                # Check if it's an image
                 try:
                     parsed = json.loads(file_content)
                     if parsed.get("type") == "image_attachment":
@@ -2073,36 +1828,27 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
                         continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-                
                 file_context += f"\n\n{file_content}"
-        
         if file_context:
             content = content + file_context
             log.info(f"📎 Attached {len(attachments_data)} file(s) to message")
-    
-    # Store image URLs for vision processing
+
     settings["image_urls"] = image_urls
 
     # =========================================================
     # STEP 0B: Process images with Vision AI
     # =========================================================
-    
+
     image_urls = settings.get("image_urls", [])
     if image_urls:
         log.info(f"👁️ Processing {len(image_urls)} image(s) with vision AI")
-        
         vision_result = await process_with_vision(content, image_urls, settings)
-        
         if vision_result:
             save_message(guild_id, channel_id, user_id, user_name, "user", f"{content} [+{len(image_urls)} image(s)]")
             save_message(guild_id, channel_id, user_id, user_name, "assistant", vision_result)
             return {"text": vision_result, "fallback_note": "👁️ Vision AI", "actions": []}
         else:
-            return {
-                "text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti.",
-                "fallback_note": None,
-                "actions": []
-            }
+            return {"text": "Maaf, saya tidak bisa memproses gambar saat ini. Coba lagi nanti.", "fallback_note": None, "actions": []}
 
     # =========================================================
     # STEP 1: Try smart skills (time, weather, calendar)
@@ -2120,7 +1866,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
 
         msgs = [
-            {"role": "system", "content": SYSTEM_PROMPTS["with_skill"]},
+            {"role": "system", "content": get_system_prompt("with_skill", user_id, user_name)},
             *[{"role": m["role"], "content": m["content"]} for m in history],
             {"role": "user", "content": f"[{user_name}] bertanya: {content}\n\nHasil tool:\n{skill_result}\n\nSampaikan informasi ini secara natural."}
         ]
@@ -2141,6 +1887,8 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         detected = ModeDetector.detect(content)
         if detected != "normal":
             mode = detected
+            # Re-generate prompt for new mode
+            system_prompt = get_system_prompt(mode, user_id, user_name)
 
     # =========================================================
     # STEP 2B: Auto Tool Calling
@@ -2151,7 +1899,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
 
     from core.providers import supports_tool_calling
     if supports_tool_calling(prov):
-        system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
         formatted_history = []
         for msg in history:
             if msg["role"] == "user" and msg.get("user_name"):
@@ -2165,7 +1912,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
         else:
             voice_ctx = " [not in voice channel]"
 
-        # ── URL Detection: inject hint so AI uses fetch_url ──
         user_content = f"[{user_name}]{voice_ctx}: {content}"
         urls = re.findall(r'https?://[^\s<>"\']+', content)
         if urls:
@@ -2191,7 +1937,6 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0, user
 
     profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
-    system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["normal"])
 
     formatted_history = []
     for msg in history:
