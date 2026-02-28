@@ -14,6 +14,9 @@ CHANGELOG (Feb 27):
 """
 
 import os
+import json
+import hashlib
+import time
 import aiohttp
 import asyncio
 import logging
@@ -567,41 +570,59 @@ class HuggingFaceProvider(OpenAICompatibleProvider):
 
 
 # ============================================================
-# COHERE PROVIDER
+# COHERE PROVIDER — Full Tool Calling Support
 # ============================================================
 
 class CohereProvider(BaseProvider):
-    """Cohere API - Uses v2 chat endpoint"""
+    """Cohere API v2 — with function calling support"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.name = "cohere"
         self.endpoint = "https://api.cohere.ai/v2/chat"
     
-    async def chat(
-        self,
-        messages: List[Dict[str, str]],
-        model: str,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-        **kwargs
-    ) -> AIResponse:
-        import time
-        start = time.time()
+    def _convert_tools_to_cohere(self, openai_tools):
+        cohere_tools = []
+        for tool in openai_tools:
+            if tool.get("type") == "function":
+                func = tool["function"]
+                cohere_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": func["name"],
+                        "description": func.get("description", ""),
+                        "parameters": func.get("parameters", {})
+                    }
+                })
+        return cohere_tools
+    
+    async def chat(self, messages, model, temperature=0.7, max_tokens=4096, **kwargs):
+        import time as _time
+        start = _time.time()
         
         cohere_messages = []
         for msg in messages:
-            role = "assistant" if msg["role"] == "assistant" else "user"
-            if msg["role"] == "system":
+            role = msg["role"]
+            if role == "system":
                 role = "system"
+            elif role == "assistant":
+                role = "assistant"
+            else:
+                role = "user"
             cohere_messages.append({"role": role, "content": msg["content"]})
         
         payload = {
             "model": model,
             "messages": cohere_messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens
         }
+        
+        # Tool calling support
+        if kwargs.get("tools"):
+            cohere_tools = self._convert_tools_to_cohere(kwargs["tools"])
+            if cohere_tools:
+                payload["tools"] = cohere_tools
         
         headers = {
             "Content-Type": "application/json",
@@ -611,29 +632,51 @@ class CohereProvider(BaseProvider):
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.endpoint, headers=headers, json=payload,
-                    timeout=aiohttp.ClientTimeout(total=60)
-                ) as resp:
-                    latency = time.time() - start
+                async with session.post(self.endpoint, headers=headers, json=payload,
+                                        timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    latency = _time.time() - start
                     if resp.status == 200:
                         data = await resp.json()
-                        content = data["message"]["content"][0]["text"]
+                        message = data.get("message", {})
+                        content_parts = message.get("content", [])
+                        
+                        text_content = ""
+                        for part in content_parts:
+                            if isinstance(part, dict) and "text" in part:
+                                text_content += part["text"]
+                            elif isinstance(part, str):
+                                text_content += part
+                        
+                        tool_calls = None
+                        cohere_tc = message.get("tool_calls", [])
+                        if cohere_tc:
+                            tool_calls = []
+                            for i, tc in enumerate(cohere_tc):
+                                tool_calls.append({
+                                    "id": tc.get("id", f"call_{i}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc["function"]["name"],
+                                        "arguments": tc["function"].get("arguments", "{}")
+                                    }
+                                })
+                        
+                        usage = data.get("usage", {}).get("tokens", {})
+                        tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        
                         return AIResponse(
-                            success=True, content=content,
-                            provider=self.name, model=model, latency=latency
+                            success=True, content=text_content, provider=self.name, model=model,
+                            tokens_used=tokens, latency=latency, tool_calls=tool_calls, raw=data
                         )
                     else:
+                        error_text = await resp.text()
+                        log.warning(f"Cohere error {resp.status}: {error_text[:200]}")
                         return AIResponse(
-                            success=False, content="",
-                            provider=self.name, model=model,
-                            error=f"HTTP {resp.status}", latency=latency
+                            success=False, content="", provider=self.name, model=model,
+                            error=f"HTTP {resp.status}: {error_text[:100]}", latency=latency
                         )
         except Exception as e:
-            return AIResponse(
-                success=False, content="",
-                provider=self.name, model=model, error=str(e)
-            )
+            return AIResponse(success=False, content="", provider=self.name, model=model, error=str(e))
 
 
 # ============================================================
@@ -667,21 +710,49 @@ class RoutewayProvider(OpenAICompatibleProvider):
 
 
 # ============================================================
-# GEMINI PROVIDER
+# GEMINI PROVIDER — Full Tool Calling Support
 # ============================================================
 
 class GeminiProvider(BaseProvider):
-    """Google Gemini API"""
+    """Google Gemini API — with function calling support"""
     
     def __init__(self, api_key: str):
         super().__init__(api_key)
         self.name = "gemini"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
     
-    async def chat(self, messages: List[Dict[str, str]], model: str, temperature: float = 0.7, max_tokens: int = 4096, **kwargs) -> AIResponse:
-        import time
-        start = time.time()
-        
+    def _convert_tools_to_gemini(self, openai_tools):
+        declarations = []
+        for tool in openai_tools:
+            if tool.get("type") == "function":
+                func = tool["function"]
+                decl = {"name": func["name"], "description": func.get("description", "")}
+                params = func.get("parameters", {})
+                if params:
+                    decl["parameters"] = params
+                declarations.append(decl)
+        return [{"functionDeclarations": declarations}] if declarations else []
+    
+    def _convert_tool_calls_to_openai(self, parts):
+        tool_calls = []
+        for i, part in enumerate(parts):
+            if "functionCall" in part:
+                fc = part["functionCall"]
+                fc_name = fc.get("name", "unknown")
+                call_id = "call_" + hashlib.md5(f"{fc_name}_{i}".encode()).hexdigest()[:12]
+                tool_calls.append({
+                    "id": call_id, 
+                    "type": "function",
+                    "function": {
+                        "name": fc_name, 
+                        "arguments": json.dumps(fc.get("args", {}))
+                    }
+                })
+        return tool_calls
+    
+    async def chat(self, messages, model, temperature=0.7, max_tokens=4096, **kwargs):
+        import time as _time
+        start = _time.time()
         contents = []
         system_instruction = None
         
@@ -693,26 +764,45 @@ class GeminiProvider(BaseProvider):
                 contents.append({"role": role, "parts": [{"text": msg["content"]}]})
         
         endpoint = f"{self.base_url}/{model}:generateContent?key={self.api_key}"
-        
-        payload = {"contents": contents, "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}}
+        payload = {
+            "contents": contents,
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}
+        }
         
         if system_instruction:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
         
-        if kwargs.get("search") or kwargs.get("grounding"):
+        # Tool calling support
+        if kwargs.get("tools"):
+            gemini_tools = self._convert_tools_to_gemini(kwargs["tools"])
+            if gemini_tools:
+                payload["tools"] = gemini_tools
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
+        elif kwargs.get("search") or kwargs.get("grounding"):
             payload["tools"] = [{"google_search": {}}]
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(endpoint, headers={"Content-Type": "application/json"}, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    latency = time.time() - start
+                async with session.post(endpoint, headers={"Content-Type": "application/json"}, 
+                                        json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    latency = _time.time() - start
                     if resp.status == 200:
                         data = await resp.json()
-                        content = "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"])
-                        return AIResponse(success=True, content=content, provider=self.name, model=model, latency=latency)
+                        parts = data["candidates"][0]["content"]["parts"]
+                        text_content = "".join(p.get("text", "") for p in parts if "text" in p)
+                        tool_calls = self._convert_tool_calls_to_openai(parts)
+                        tokens = data.get("usageMetadata", {}).get("totalTokenCount", 0)
+                        return AIResponse(
+                            success=True, content=text_content, provider=self.name, model=model,
+                            tokens_used=tokens, latency=latency,
+                            tool_calls=tool_calls if tool_calls else None, raw=data
+                        )
                     else:
                         error_text = await resp.text()
-                        return AIResponse(success=False, content="", provider=self.name, model=model, error=f"HTTP {resp.status}: {error_text[:100]}", latency=latency)
+                        return AIResponse(
+                            success=False, content="", provider=self.name, model=model,
+                            error=f"HTTP {resp.status}: {error_text[:100]}", latency=latency
+                        )
         except Exception as e:
             return AIResponse(success=False, content="", provider=self.name, model=model, error=str(e))
 
