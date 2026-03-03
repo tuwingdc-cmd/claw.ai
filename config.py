@@ -984,14 +984,23 @@ FALLBACK_CHAINS = {
 
 LAVALINK_NODES = [
     {
-        "identifier": "Serenetia-V4",
-        "host":     "lavalink.serenetia.com",  # ✅ Ganti ini
-        "port":     443,
-        "password": "https://dsc.gg/ajidevserver",
-        "secure":   True,
+        "identifier": "Jirayu-Primary",
+        "host":     "lavalink.jirayu.net",
+        "port":     13592,
+        "password": "youshallnotpass",
+        "secure":   False,
         "heartbeat": 30,
         "retries":   3,
-    }
+    },
+    {
+        "identifier": "Techbyte-Backup",
+        "host":     "lavahatry4.techbyte.host",
+        "port":     3000,
+        "password": "naig.is-a.dev",
+        "secure":   False,
+        "heartbeat": 30,
+        "retries":   3,
+    },
 ]
 
 GENIUS_TOKEN = os.getenv("GENIUS_API_KEY")
