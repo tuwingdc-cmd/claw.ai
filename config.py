@@ -985,12 +985,12 @@ FALLBACK_CHAINS = {
 LAVALINK_NODES = [
     {
         "identifier": "Serenetia-V4",
-        "host":        os.getenv("LAVALINK_HOST",     "lavalinkv4.serenetia.com"),
-        "port":        int(os.getenv("LAVALINK_PORT", "443")),
-        "password":    os.getenv("LAVALINK_PASSWORD", "https://dsc.gg/ajidevserver"),
-        "secure":      os.getenv("LAVALINK_SECURE",   "true").lower() == "true",
-        "heartbeat":   30,
-        "retries":     3,
+        "host":     "lavalink.serenetia.com",  # ✅ Ganti ini
+        "port":     443,
+        "password": "https://dsc.gg/ajidevserver",
+        "secure":   True,
+        "heartbeat": 30,
+        "retries":   3,
     }
 ]
 
