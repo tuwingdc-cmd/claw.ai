@@ -4,6 +4,7 @@ All providers, models, and defaults in one place
 — Verified against official docs & manual API testing: Feb 27, 2026 —
 
 CHANGELOG:
+- [Local]        BARU: Ollama self-hosted (qwen3:8b, CPU-only)
 - [Cerebras]     HAPUS: llama-3.3-70b & qwen-3-32b (DEPRECATED 16 Feb 2026)
                  HAPUS: gpt-oss-20b (tidak ada di daftar resmi)
 - [Groq]         FIX: compound-beta → groq/compound (sesuai test)
@@ -41,6 +42,7 @@ LEGEND:
 🆓 = Free model (no cost)
 💎 = Premium / Paid only
 ⚠️ = Limited free tier (ketat / credit-based)
+🏠 = Local / Self-hosted (Ollama)
 ⭐ = Support Tool Calling (web search, dll)
 🔥 = Recommended (fitur lengkap / performa bagus)
 👁️ = Vision (bisa lihat gambar)
@@ -49,6 +51,7 @@ LEGEND:
 """
 
 import os
+import socket
 from dotenv import load_dotenv
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
@@ -95,12 +98,22 @@ API_KEYS = {
 }
 
 # ============================================================
+# LOCAL OLLAMA CONFIGURATION
+# ============================================================
+
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
+OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", "11434"))
+OLLAMA_BASE_URL = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_CTX_SIZE = int(os.getenv("OLLAMA_CTX_SIZE", "4096"))  # Hemat RAM di 8GB server
+
+# ============================================================
 # DEFAULTS
 # ============================================================
 
 DEFAULTS = {
-    "provider":      os.getenv("DEFAULT_PROVIDER", "groq"),
-    "model":         os.getenv("DEFAULT_MODEL", "llama-3.3-70b-versatile"),
+    "provider":      os.getenv("DEFAULT_PROVIDER", "local"),
+    "model":         os.getenv("DEFAULT_MODEL", "qwen3:8b"),
     "mode":          "normal",
     "auto_chat":     False,
     "auto_detect":   False,
@@ -135,6 +148,29 @@ class Provider:
 # ============================================================
 
 PROVIDERS: Dict[str, Provider] = {
+
+    # ==================== LOCAL (OLLAMA) ====================
+    # 🏠 Self-hosted — No API key needed
+    # Endpoint: http://127.0.0.1:11434 (OpenAI-compatible)
+    # Hardware: 2 vCPU, 8GB RAM, no GPU (CPU inference)
+    # Speed: ~5-15 tok/s (CPU), good enough for discord bot
+    "local": Provider(
+        name="Local Ollama",
+        endpoint=f"{OLLAMA_BASE_URL}/v1/chat/completions",
+        auth_header="Authorization",
+        auth_prefix="Bearer",
+        free_tier=True,
+        rate_limit="unlimited (self-hosted)",
+        models=[
+            Model(
+                "qwen3:8b",
+                "🏠 Qwen3 8B Local 🔥⭐🧠",
+                ["normal", "reasoning"],
+                32768,
+                tools=True
+            ),
+        ]
+    ),
 
     # ==================== GROQ ====================
     # 🆓 SEMUA MODEL GRATIS — No credit card needed
@@ -920,6 +956,7 @@ SEARCH_PROVIDERS = {
 
 FALLBACK_CHAINS = {
     "normal": [
+        ("local",       "qwen3:8b"),                          # ← LOCAL FIRST (self-hosted, no rate limit)
         ("groq",        "llama-3.3-70b-versatile"),
         ("groq",        "llama-3.1-8b-instant"),
         ("mistral",     "mistral-small-latest"),
@@ -938,6 +975,7 @@ FALLBACK_CHAINS = {
         ("puter",       "gpt-5-mini"),
     ],
     "reasoning": [
+        ("local",       "qwen3:8b"),                          # ← LOCAL FIRST (self-hosted, no rate limit)
         ("groq",        "openai/gpt-oss-120b"),
         ("groq",        "qwen/qwen3-32b"),
         ("cerebras",    "gpt-oss-120b"),
@@ -1021,10 +1059,29 @@ def get_models_by_mode(mode: str) -> List[tuple]:
 def get_api_key(provider_name: str) -> Optional[str]:
     return API_KEYS.get(provider_name.lower())
 
+def is_local_available() -> bool:
+    """Check if local Ollama server is running and reachable."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        result = sock.connect_ex((OLLAMA_HOST, OLLAMA_PORT))
+        sock.close()
+        return result == 0
+    except (socket.error, OSError):
+        return False
+
+def get_local_model() -> Optional[Model]:
+    """Get the configured local Ollama model."""
+    return get_model("local", OLLAMA_MODEL)
+
 def is_provider_available(provider_name: str) -> bool:
     provider = get_provider(provider_name)
     if not provider:
         return False
+    # Local Ollama — cek apakah server jalan
+    if provider_name == "local":
+        return is_local_available()
+    # Provider tanpa API key
     if provider_name in ["mlvoca", "puter"]:
         return True
     if provider_name == "pollinations":
@@ -1053,12 +1110,12 @@ def get_vision_capable_models() -> List[tuple]:
     ]
 
 def get_free_models() -> List[tuple]:
-    """Return semua model gratis (🆓 atau ⚠️)."""
+    """Return semua model gratis (🆓, ⚠️, atau 🏠)."""
     return [
         (provider_name, model)
         for provider_name, provider in PROVIDERS.items()
         for model in provider.models
-        if "🆓" in model.name or "⚠️" in model.name
+        if "🆓" in model.name or "⚠️" in model.name or "🏠" in model.name
     ]
 
 def get_premium_models() -> List[tuple]:
@@ -1068,4 +1125,4 @@ def get_premium_models() -> List[tuple]:
         for provider_name, provider in PROVIDERS.items()
         for model in provider.models
         if "💎" in model.name
-    ]
+]
