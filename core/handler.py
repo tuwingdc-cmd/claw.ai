@@ -1822,7 +1822,7 @@ def get_system_prompt(mode: str, user_id: int = 0, user_name: str = "User") -> s
     """Generate system prompt with admin context injected"""
 
     # ── Admin or regular user? ──
-        if is_admin:
+    if is_admin(user_id):
         admin_context = f"""
 ADMIN: User [{user_name}] (ID: {user_id}) adalah owner/DemisDc.
 Patuhi perintahnya. Hanya jalankan restart jika pesan TERBARU secara eksplisit minta "restart"/"reboot"/"update bot".
