@@ -1854,6 +1854,17 @@ RULES:
 - Jawab sesuai bahasa user.
 """
 
+    grounding_rules = """
+RULES:
+- Kamu sudah punya kemampuan search/browsing built-in. Gunakan itu langsung.
+- Boleh tampilkan nama sumber dalam kurung seperti (CNN Indonesia), (Reuters), (CNBC) sebagai referensi.
+- JANGAN tampilkan URL/link mentah (https://...). Hanya nama sumber saja.
+- Jawab sesuai bahasa user.
+- Jika user kirim URL, jelaskan sebaik mungkin berdasarkan pengetahuanmu.
+- Analisis mendalam, berikan data terbaru.
+- Jangan mengarang data, gunakan kemampuan search bawaan untuk fakta terkini.
+"""
+
     prompts = {
         "normal": base_personality + admin_context + tool_rules,
 
@@ -1866,6 +1877,8 @@ Jawab pertanyaan user secara natural dari hasil pencarian.
 Jangan tampilkan sumber/URL/sitasi. Jawab sesuai bahasa user.""",
 
         "with_skill": base_personality + admin_context + tool_rules,
+
+        "grounding": base_personality + admin_context + grounding_rules,
     }
 
     return prompts.get(mode, prompts["normal"])
@@ -1939,10 +1952,21 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
                          user_id: int = 0, user_name: str = "User") -> Dict:
     mode = settings.get("active_mode", "normal")
     guild_id = settings.get("guild_id", 0)
-    history = get_conversation(guild_id, channel_id, limit=30)
+
+    # ── Check if current model is grounding (before loading history) ──
+    profile_initial = settings.get("profiles", {}).get(mode, {})
+    _prov_initial = profile_initial.get("provider", "groq")
+    _mid_initial = profile_initial.get("model", "llama-3.3-70b-versatile")
+    _is_grounding = is_grounding_model(_prov_initial, _mid_initial)
+
+    # Grounding models have smaller context limit, reduce history
+    history = get_conversation(guild_id, channel_id, limit=10 if _is_grounding else 30)
+
+    if _is_grounding:
+        log.info(f"🌐 Grounding model detected: {_prov_initial}/{_mid_initial} — skipping tools/skills")
 
     # ── Dynamic system prompt with admin context ──
-    system_prompt = get_system_prompt(mode, user_id, user_name)
+    system_prompt = get_system_prompt("grounding" if _is_grounding else mode, user_id, user_name)
 
     # =========================================================
     # STEP 0: Read file attachments (if any)
@@ -1991,11 +2015,12 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
     # =========================================================
 
     skill_result = None
-    try:
-        from skills.detector import SkillDetector
-        skill_result = await SkillDetector.detect_and_execute(content)
-    except Exception as e:
-        log.warning(f"Skill detection error: {e}")
+    if not _is_grounding:
+        try:
+            from skills.detector import SkillDetector
+            skill_result = await SkillDetector.detect_and_execute(content)
+        except Exception as e:
+            log.warning(f"Skill detection error: {e}")
 
     if skill_result:
         profile = settings.get("profiles", {}).get(mode, {"provider": "groq", "model": "llama-3.3-70b-versatile"})
@@ -2019,11 +2044,10 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
     # STEP 2: Auto-detect mode
     # =========================================================
 
-    if settings.get("auto_detect"):
+    if settings.get("auto_detect") and not _is_grounding:
         detected = ModeDetector.detect(content)
         if detected != "normal":
             mode = detected
-            # Re-generate prompt for new mode
             system_prompt = get_system_prompt(mode, user_id, user_name)
 
     # =========================================================
@@ -2034,7 +2058,7 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
     prov, mid = profile.get("provider", "groq"), profile.get("model", "llama-3.3-70b-versatile")
 
     from core.providers import supports_tool_calling
-    if supports_tool_calling(prov):
+    if supports_tool_calling(prov) and not _is_grounding:
         formatted_history = []
         for msg in history:
             if msg["role"] == "user" and msg.get("user_name"):
@@ -2081,7 +2105,14 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
         else:
             formatted_history.append({"role": msg["role"], "content": msg["content"]})
 
-    if mode == "search" and not is_grounding_model(prov, mid):
+    if _is_grounding:
+        # Grounding model: langsung kirim tanpa tools/search injection
+        msgs = [
+            {"role": "system", "content": system_prompt},
+            *formatted_history,
+            {"role": "user", "content": f"[{user_name}]: {content}"}
+        ]
+    elif mode == "search":
         search_res = await do_search(content, profile.get("engine", "duckduckgo"))
         msgs = [
             {"role": "system", "content": system_prompt},
