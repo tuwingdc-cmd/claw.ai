@@ -1857,7 +1857,6 @@ RULES:
     grounding_rules = """
 RULES:
 - Kamu sudah punya kemampuan search/browsing built-in. Gunakan itu langsung.
-- Boleh tampilkan nama sumber dalam kurung seperti (CNN Indonesia), (Reuters), (CNBC) sebagai referensi.
 - JANGAN tampilkan URL/link mentah (https://...). Hanya nama sumber saja.
 - Jawab sesuai bahasa user.
 - Jika user kirim URL, jelaskan sebaik mungkin berdasarkan pengetahuanmu.
