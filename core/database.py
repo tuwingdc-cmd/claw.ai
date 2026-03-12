@@ -3,6 +3,17 @@ Persistent Storage - Settings + Conversation Memory
 """
 
 import sqlite3
+import libsql_experimental as libsql
+
+TURSO_URL   = os.getenv("TURSO_DATABASE_URL")
+TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+USE_TURSO   = bool(TURSO_URL and TURSO_TOKEN)
+
+def _get_conn():
+    if USE_TURSO:
+        return libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    return _get_conn()
 import json
 import logging
 import os
@@ -27,7 +38,7 @@ DEFAULT_SETTINGS = {
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     
     c.execute("""
@@ -71,7 +82,7 @@ def init_db():
 
 def load_settings(guild_id: int) -> dict:
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("SELECT settings FROM guild_settings WHERE guild_id = ?", (guild_id,))
         row = c.fetchone()
@@ -88,7 +99,7 @@ def load_settings(guild_id: int) -> dict:
 
 def save_settings(guild_id: int, settings: dict):
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("""
             INSERT INTO guild_settings (guild_id, settings, updated_at)
@@ -103,7 +114,7 @@ def save_settings(guild_id: int, settings: dict):
 
 def delete_settings(guild_id: int):
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))
         conn.commit()
@@ -127,7 +138,7 @@ MAX_MEMORY_MESSAGES = 50  # Per channel, diperbesar!
 def save_message(guild_id: int, channel_id: int, user_id: int, user_name: str, role: str, content: str):
     """Save a message to conversation history"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("""
             INSERT INTO conversations (guild_id, channel_id, user_id, user_name, role, content)
@@ -151,7 +162,7 @@ def save_message(guild_id: int, channel_id: int, user_id: int, user_name: str, r
 def get_conversation(guild_id: int, channel_id: int, limit: int = 30) -> List[Dict]:
     """Get conversation history for a channel"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("""
             SELECT role, content, user_name, user_id FROM conversations
@@ -177,7 +188,7 @@ def get_conversation(guild_id: int, channel_id: int, limit: int = 30) -> List[Di
 def get_user_history(user_id: int, limit: int = 20) -> List[Dict]:
     """Get conversation history for a specific user (across channels)"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("""
             SELECT role, content, channel_id FROM conversations
@@ -194,7 +205,7 @@ def get_user_history(user_id: int, limit: int = 20) -> List[Dict]:
 def clear_conversation(guild_id: int, channel_id: int = None):
     """Clear conversation history"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         if channel_id:
             c.execute("DELETE FROM conversations WHERE guild_id = ? AND channel_id = ?", (guild_id, channel_id))
@@ -208,7 +219,7 @@ def clear_conversation(guild_id: int, channel_id: int = None):
 def get_memory_stats(guild_id: int) -> dict:
     """Get memory statistics"""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _get_conn()
         c = conn.cursor()
         c.execute("SELECT COUNT(DISTINCT channel_id), COUNT(*) FROM conversations WHERE guild_id = ?", (guild_id,))
         channels, total = c.fetchone()
@@ -245,7 +256,7 @@ class SettingsManager:
     @classmethod
     def get_all_guilds(cls) -> list:
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = _get_conn()
             c = conn.cursor()
             c.execute("SELECT guild_id FROM guild_settings")
             rows = c.fetchall()
@@ -260,7 +271,7 @@ class SettingsManager:
 
 def init_reminders_table():
     """Create reminders table if not exists"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS reminders (
@@ -297,7 +308,7 @@ def create_reminder(guild_id: int, channel_id: int, user_id: int, user_name: str
     import pytz
     from datetime import timedelta
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     
     # Calculate next_trigger
@@ -356,7 +367,7 @@ def get_due_reminders() -> list:
     """Get all reminders that should trigger now"""
     import pytz
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     c.execute('SELECT * FROM reminders WHERE is_active = 1 AND next_trigger IS NOT NULL')
     rows = c.fetchall()
@@ -388,7 +399,7 @@ def mark_reminder_triggered(reminder_id: int, reschedule: bool = False):
     import pytz
     from datetime import timedelta
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     now = datetime.now(pytz.UTC).isoformat()
     
@@ -431,7 +442,7 @@ def mark_reminder_triggered(reminder_id: int, reschedule: bool = False):
 
 def get_user_reminders(guild_id: int, user_id: int) -> list:
     """Get all active reminders for a user"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     c.execute('''
         SELECT * FROM reminders 
@@ -451,7 +462,7 @@ def get_user_reminders(guild_id: int, user_id: int) -> list:
 
 def get_all_active_reminders(guild_id: int = None) -> list:
     """Get all active reminders (optionally filtered by guild)"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     if guild_id:
         c.execute('SELECT * FROM reminders WHERE guild_id = ? AND is_active = 1 ORDER BY next_trigger', (guild_id,))
@@ -470,7 +481,7 @@ def get_all_active_reminders(guild_id: int = None) -> list:
 
 def delete_reminder(reminder_id: int, user_id: int = None) -> bool:
     """Delete a reminder (optionally verify owner)"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     if user_id:
         c.execute('DELETE FROM reminders WHERE id = ? AND user_id = ?', (reminder_id, user_id))
@@ -485,7 +496,7 @@ def delete_reminder(reminder_id: int, user_id: int = None) -> bool:
 
 def cancel_reminder_by_message(guild_id: int, user_id: int, keyword: str) -> int:
     """Cancel reminders matching keyword in message"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_conn()
     c = conn.cursor()
     c.execute('''
         UPDATE reminders SET is_active = 0 
