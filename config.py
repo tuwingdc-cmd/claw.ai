@@ -583,54 +583,97 @@ PROVIDERS: Dict[str, Provider] = {
     ),
 
     # ==================== POLLINATIONS ====================
-    # 🆓 No signup needed, $1.5/week free credits
-    # Verified: curl gen.pollinations.ai/models — 26 models
-    "pollinations": Provider(
-        name="Pollinations",
-        endpoint="https://gen.pollinations.ai/v1/chat/completions",
-        auth_header="Authorization",
-        auth_prefix="Bearer",
-        rate_limit="1/15s (anon), unlimited (sk_)",
-        models=[
-            # ── 🆓 Free Tier ──────────────────────────────────────
-            Model("qwen-safety",  "🆓 Qwen3Guard 8B",              ["normal"]),
-            Model("nova-fast",    "🆓 Amazon Nova Micro",           ["normal"]),
-            Model("openai-fast",  "🆓 OpenAI GPT-5 Nano 👁️",     ["normal"], vision=True),
-            Model("gemini-fast",  "🆓 Gemini 2.5 Flash Lite 👁️",  ["normal"], vision=True),
-            Model("qwen-coder",   "🆓 Qwen3 Coder 30B",            ["normal"]),
-            Model("mistral",      "🆓 Mistral Small 3.2 24B",      ["normal"]),
-            Model("qwen-character","🆓 Qwen Character 🎭",         ["normal"]),
+# 🆓 No signup needed, free daily Pollen grants untuk registered devs
+# Endpoint: gen.pollinations.ai/v1 (OpenAI-compatible)
+# Updated: Maret 2026 — dari curl gen.pollinations.ai/models (live data)
+#
+# LEGEND:
+#   💎 = paid_only (butuh Pollen saldo)
+#   🆓 = gratis / sangat murah
+#   ⚠️  = via api.airforce (community provider, tidak stabil)
+#   👁️  = vision (bisa terima gambar)
+#   🔍 = search built-in
+#   🧠 = reasoning built-in
+#   🎵 = specialized (musik)
+#   🛡️  = specialized (safety/moderation)
+#   🎭 = specialized (roleplay/character)
+#
+# PERUBAHAN vs versi lama:
+#   ✅ mistral       — KEMBALI AKTIF (terkonfirmasi di live data)
+#   ✅ qwen-character — KEMBALI AKTIF (ada di live data, meski via airforce)
+#   ✅ perplexity-reasoning — AKTIF (terkonfirmasi)
+#   ✅ openai-reasoning — ALIAS dari openai-large (bukan model terpisah)
+#   ✅ step-3.5-flash — DITAMBAH (ada di live data)
+#   ✅ claude-airforce — DITAMBAH (ada di live data, community provider)
+#   ✅ openai-seraphyn — DITAMBAH (GPT-5.4 via seraphyn.ai)
+#   ✅ minimax M2.1 → M2.5 (update versi)
+#   ✅ gemini-large = Gemini 3.1 Pro (bukan 3 Pro)
+#   ✅ grok — GRATIS (tidak ada paid_only flag di live data!)
+#   ✅ openai-large — 💎 BERBAYAR (ada paid_only flag)
 
-            # Mid Tier
-            Model("openai",   "🆓 OpenAI GPT-5 Mini 👁️",  ["normal"], vision=True),
-            Model("deepseek", "🆓 DeepSeek V3.2",           ["normal"]),
-            Model("minimax",  "🆓 MiniMax M2.1",            ["normal"]),
-            Model("kimi",     "🆓 Kimi K2.5 👁️",           ["normal"], vision=True),
-            Model("glm",      "🆓 Z.ai GLM-5",              ["normal"]),
+"pollinations": Provider(
+    name="Pollinations",
+    endpoint="https://gen.pollinations.ai/v1/chat/completions",
+    auth_header="Authorization",
+    auth_prefix="Bearer",
+    rate_limit="1/15s (anon), unlimited (sk_)",
+    models=[
 
-            # Search Built-in
-            Model("perplexity-fast", "🆓 Perplexity Sonar 🔍",              ["search"]),
-            Model("gemini-search",   "🆓 Gemini 2.5 Flash Search 🔥🔍👁️", ["search"], vision=True, tools=True),
+        # ── 🆓 Free Tier — Ultra Murah ────────────────────────────
+        Model("qwen-safety",     "🛡️ Qwen3Guard 8B",             ["normal"]),                          # $0.00000001/M — safety/moderation
+        Model("nova-fast",       "🆓 Amazon Nova Micro",          ["normal"]),                          # $0.000000035/M — paling murah text
+        Model("step-3.5-flash",  "🆓 Step 3.5 Flash ⚠️",         ["normal"]),                          # $0.00000001/M — via airforce, alpha
+        Model("openai-fast",     "🆓 GPT-5 Nano 👁️",             ["normal"], vision=True),             # $0.00000006/M
+        Model("gemini-fast",     "🆓 Gemini 2.5 Flash Lite 👁️",  ["normal"], vision=True),             # $0.0000001/M — RECOMMENDED harian
+        Model("mistral",         "🆓 Mistral Small 3.2 24B",      ["normal"]),                          # $0.0000001/M
+        Model("qwen-coder",      "🆓 Qwen3 Coder 30B",            ["normal"]),                          # $0.00000006/M — coding
+        Model("qwen-character",  "🆓 Qwen Character 🎭⚠️",        ["normal"]),                          # $0.00000001/M — roleplay, via airforce
 
-            # Premium Features
-            Model("openai-large",         "🆓 OpenAI GPT-5.2 👁️",         ["normal"],              vision=True),
-            Model("perplexity-reasoning", "🆓 Perplexity Reasoning 🔍🧠",  ["reasoning", "search"]),
-            Model("openai-audio",         "🆓 GPT-4o Mini Audio 👁️",      ["normal"],              vision=True),
-            Model("midijourney",          "🆓 MIDIjourney 🎵",             ["normal"]),
+        # ── 🆓 Mid Tier ───────────────────────────────────────────
+        Model("openai",      "🆓 GPT-5 Mini 👁️",      ["normal"], vision=True),                        # $0.00000015/M
+        Model("deepseek",    "🆓 DeepSeek V3.2 🧠",    ["normal", "reasoning"]),                        # $0.00000056/M — reasoning built-in
+        Model("minimax",     "🆓 MiniMax M2.5 🧠",     ["normal", "reasoning"]),                        # $0.0000003/M
+        Model("kimi",        "🆓 Kimi K2.5 👁️🧠",     ["normal", "reasoning"], vision=True),           # $0.0000006/M — 256K context
+        Model("glm",         "🆓 Z.ai GLM-5 🧠",       ["normal", "reasoning"]),                        # $0.0000006/M — 744B MoE
+        Model("grok",        "🆓 xAI Grok 4 Fast",     ["normal"]),                                     # $0.0000002/M — GRATIS (tidak ada paid_only)
 
-            # ── 💎 PAID ONLY ──────────────────────────────────────
-            Model("grok",          "💎 xAI Grok 4 Fast",           ["normal"]),
-            Model("gemini",        "💎 Google Gemini 3 Flash 👁️", ["normal"],              vision=True),
-            Model("claude-fast",   "💎 Claude Haiku 4.5 👁️",      ["normal"],              vision=True),
-            Model("claude",        "💎 Claude Sonnet 4.6 👁️",     ["normal"],              vision=True),
-            Model("claude-large",  "💎 Claude Opus 4.6 👁️",       ["normal"],              vision=True),
-            Model("gemini-large",  "💎 Gemini 3 Pro 👁️🧠",        ["normal", "reasoning"], vision=True),
+        # ── 🔍 Search Built-in ────────────────────────────────────
+        Model("perplexity-fast",      "🆓 Perplexity Sonar 🔍",           ["search"]),                  # $0.000001/M
+        Model("perplexity-reasoning", "🆓 Perplexity Sonar Reasoning 🔍🧠", ["reasoning", "search"]),   # $0.000002/M
+        Model("gemini-search",        "🆓 Gemini 2.5 Flash Search 🔍👁️",  ["search"], vision=True),    # $0.0000001/M — RECOMMENDED search
 
-            # ── 🤖 Agents ─────────────────────────────────────────
-            Model("nomnom", "🆓 NomNom 🔍🧠",       ["reasoning", "search"]),
-            Model("polly",  "🆓 Polly 🔥🔍👁️🧠",  ["normal", "reasoning", "search"], vision=True),
-        ]
-    ),
+        # ── 🆓 Specialized ────────────────────────────────────────
+        Model("midijourney",    "🆓 MIDIjourney 🎵",    ["normal"]),                                     # $0.0000022/M — musik
+        Model("openai-audio",   "🆓 GPT-4o Mini Audio 👁️🎵", ["normal"], vision=True),                  # voice I/O
+
+        # ── 🤖 Agents (Alpha) ─────────────────────────────────────
+        Model("nomnom", "🆓 NomNom 🔍🧠",       ["reasoning", "search"]),                               # web research agent
+        Model("polly",  "🆓 Polly 🔥🔍👁️🧠",  ["normal", "reasoning", "search"], vision=True),        # full assistant agent
+
+        # ── ⚠️  Community Providers (tidak stabil, bisa down) ─────
+        Model("claude-airforce",   "⚠️ Claude Sonnet 4.6 Airforce 👁️", ["normal"], vision=True),       # $0.000001/M — via api.airforce
+        Model("openai-seraphyn",   "⚠️ GPT-5.4 Seraphyn",              ["normal"]),                     # $0.00000125/M — via seraphyn.ai
+
+        # ── 💎 PAID ONLY (butuh saldo Pollen) ─────────────────────
+        Model("openai-large",  "💎 GPT-5.2 👁️🧠",       ["normal", "reasoning"], vision=True),         # $0.00000175/M in — PALING MAHAL OpenAI
+        Model("gemini",        "💎 Gemini 3 Flash 👁️",   ["normal"],              vision=True),         # $0.0000005/M — 1M context, video support
+        Model("gemini-large",  "💎 Gemini 3.1 Pro 👁️🧠", ["normal", "reasoning"], vision=True),        # $0.000002/M — 1M context
+        Model("claude-fast",   "💎 Claude Haiku 4.5 👁️", ["normal"],              vision=True),         # $0.000001/M
+        Model("claude",        "💎 Claude Sonnet 4.6 👁️", ["normal"],             vision=True),         # $0.000003/M
+        Model("claude-large",  "💎 Claude Opus 4.6 👁️",  ["normal"],              vision=True),         # $0.000005/M — PALING MAHAL overall
+    ]
+),
+
+# ============================================================
+# QUICK REFERENCE — Biaya per 1 Juta Token (Pollen)
+# ============================================================
+# TERMURAH  → nova-fast ($0.035), qwen-safety/step/qwen-character ($0.01)
+# HARIAN    → gemini-fast ($0.1) atau mistral ($0.1) — RECOMMENDED
+# SEARCH    → gemini-search ($0.1) — terbaik
+# REASONING → deepseek ($0.56) atau kimi ($0.6)
+# PREMIUM   → claude-fast ($1.0) → claude ($3.0) → claude-large ($5.0)
+# TERBOROS  → openai-large ($1.75 in / $14 out), claude-large ($5 in / $25 out)
+
 
     # ==================== CLOUDFLARE ====================
     # ⚠️ 10K NEURONS/DAY FREE
