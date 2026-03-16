@@ -3,7 +3,7 @@ Persistent Storage - Settings + Conversation Memory
 """
 
 import sqlite3
-import libsql_experimental as libsql
+import sqlite3 as libsql
 
 TURSO_URL   = os.getenv("TURSO_DATABASE_URL")
 TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
