@@ -1420,5 +1420,20 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
         log.error("DISCORD_TOKEN not found in .env")
         exit(1)
+    
+    # Start web server untuk Render health check
+    from server import keep_alive, self_ping
+    keep_alive()
+    
     log.info("Starting bot...")
-    bot.run(DISCORD_TOKEN)
+    
+    # Jalankan self-ping sebagai backup
+    import asyncio
+    
+    async def run_bot():
+        async with bot:
+            # Start self-ping task
+            bot.loop.create_task(self_ping())
+            await bot.start(DISCORD_TOKEN)
+    
+    asyncio.run(run_bot())
