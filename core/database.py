@@ -1,17 +1,177 @@
 """
 Persistent Storage - Settings + Conversation Memory
+Local SQLite (dev) ←→ Turso Cloud (production) via HTTP API
 """
 
 import json
 import logging
 import os
 import sqlite3
-from typing import Optional, Dict, List
+from typing import Dict, List
 from datetime import datetime
 
 log = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "bot.db")
+
+TURSO_URL = os.getenv("TURSO_DATABASE_URL", "")
+TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
+
+
+# ============================================================
+# TURSO HTTP API WRAPPER  (drop-in sqlite3 replacement)
+# No Rust compiler needed — pure HTTP via httpx
+# ============================================================
+
+class TursoCursor:
+    def __init__(self, conn):
+        self._conn = conn
+        self._rows: list = []
+        self._description = None
+        self._lastrowid = None
+        self._rowcount = -1
+        self._pos = 0
+
+    @property
+    def description(self):
+        return self._description
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    @property
+    def rowcount(self):
+        return self._rowcount
+
+    def execute(self, sql, params=None):
+        import httpx
+
+        # Convert Python params → Turso arg format
+        args = []
+        for p in (params or []):
+            if p is None:
+                args.append({"type": "null", "value": None})
+            elif isinstance(p, bool):
+                args.append({"type": "integer", "value": str(int(p))})
+            elif isinstance(p, int):
+                args.append({"type": "integer", "value": str(p)})
+            elif isinstance(p, float):
+                args.append({"type": "float", "value": str(p)})
+            else:
+                args.append({"type": "text", "value": str(p)})
+
+        payload = {
+            "requests": [
+                {"type": "execute", "stmt": {"sql": sql, "args": args}},
+                {"type": "close"}
+            ]
+        }
+
+        try:
+            resp = httpx.post(
+                self._conn._api_url,
+                json=payload,
+                headers=self._conn._headers,
+                timeout=30.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            log.error(f"Turso HTTP error: {e}")
+            raise
+
+        results = data.get("results", [])
+        if not results:
+            self._rows = []
+            return self
+
+        first = results[0]
+
+        # Check for SQL errors from Turso
+        if first.get("type") == "error":
+            err = first.get("error", {}).get("message", "Unknown Turso error")
+            raise Exception(f"Turso SQL error: {err}")
+
+        result = first.get("response", {}).get("result", {})
+
+        # Parse column descriptions
+        cols = result.get("cols", [])
+        if cols:
+            self._description = [(c["name"],) + (None,) * 6 for c in cols]
+        else:
+            self._description = None
+
+        # Parse rows
+        self._rows = []
+        for row in result.get("rows", []):
+            parsed = []
+            for cell in row:
+                ct = cell.get("type", "null")
+                cv = cell.get("value")
+                if ct == "null" or cv is None:
+                    parsed.append(None)
+                elif ct == "integer":
+                    parsed.append(int(cv))
+                elif ct == "float":
+                    parsed.append(float(cv))
+                else:
+                    parsed.append(str(cv))
+            self._rows.append(tuple(parsed))
+
+        # Metadata
+        lir = result.get("last_insert_rowid")
+        self._lastrowid = int(lir) if lir is not None else None
+        arc = result.get("affected_row_count")
+        self._rowcount = int(arc) if arc is not None else -1
+        self._pos = 0
+
+        return self
+
+    def fetchone(self):
+        if self._pos < len(self._rows):
+            row = self._rows[self._pos]
+            self._pos += 1
+            return row
+        return None
+
+    def fetchall(self):
+        rows = self._rows[self._pos:]
+        self._pos = len(self._rows)
+        return rows
+
+
+class TursoConnection:
+    def __init__(self, url, token):
+        clean = url.replace("libsql://", "").replace("https://", "").replace("http://", "").rstrip("/")
+        self._api_url = f"https://{clean}/v2/pipeline"
+        self._headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+    def cursor(self):
+        return TursoCursor(self)
+
+    def commit(self):
+        pass  # Turso auto-commits each statement
+
+    def close(self):
+        pass  # Stateless HTTP — nothing to close
+
+
+# ============================================================
+# CONNECTION FACTORY
+# ============================================================
+
+def _get_conn():
+    """Returns TursoConnection (cloud) or sqlite3.Connection (local)"""
+    if USE_TURSO:
+        return TursoConnection(TURSO_URL, TURSO_TOKEN)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    return sqlite3.connect(DB_PATH)
+
 
 DEFAULT_SETTINGS = {
     "profiles": {
@@ -24,12 +184,6 @@ DEFAULT_SETTINGS = {
     "auto_detect": False,
     "enabled_channels": [],
 }
-
-
-def _get_conn():
-    """Get SQLite connection (local file)"""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return sqlite3.connect(DB_PATH)
 
 
 def init_db():
@@ -69,7 +223,9 @@ def init_db():
 
     conn.commit()
     conn.close()
-    log.info(f"Database initialized: {DB_PATH}")
+
+    storage = "Turso Cloud" if USE_TURSO else f"Local SQLite ({DB_PATH})"
+    log.info(f"Database initialized: {storage}")
 
 
 # ============================================================
@@ -130,7 +286,7 @@ def _deep_merge(base: dict, override: dict):
 
 
 # ============================================================
-# CONVERSATION MEMORY (Database-backed)
+# CONVERSATION MEMORY
 # ============================================================
 
 MAX_MEMORY_MESSAGES = 50
@@ -371,7 +527,7 @@ def get_due_reminders() -> list:
     c = conn.cursor()
     c.execute('SELECT * FROM reminders WHERE is_active = 1 AND next_trigger IS NOT NULL')
     rows = c.fetchall()
-    columns = [desc[0] for desc in c.description]
+    columns = [desc[0] for desc in c.description] if c.description else []
     conn.close()
 
     due = []
@@ -384,9 +540,7 @@ def get_due_reminders() -> list:
             next_trigger = datetime.fromisoformat(reminder["next_trigger"])
             if next_trigger.tzinfo is None:
                 next_trigger = tz.localize(next_trigger)
-            next_trigger_utc = next_trigger.astimezone(pytz.UTC)
-
-            if next_trigger_utc <= now_utc:
+            if next_trigger.astimezone(pytz.UTC) <= now_utc:
                 reminder["actions"] = json.loads(reminder.get("actions", "[]") or "[]")
                 due.append(reminder)
         except Exception as e:
@@ -419,22 +573,21 @@ def mark_reminder_triggered(reminder_id: int, reschedule: bool = False):
 
             if reminder["trigger_type"] == "daily" and reminder.get("trigger_time"):
                 hour, minute = map(int, str(reminder["trigger_time"]).split(":"))
-                next_trigger = now_local.replace(hour=hour, minute=minute, second=0)
-                next_trigger += timedelta(days=1)
-                c.execute('UPDATE reminders SET last_triggered = ?, next_trigger = ? WHERE id = ?',
-                         (now, next_trigger.isoformat(), reminder_id))
+                next_t = now_local.replace(hour=hour, minute=minute, second=0) + timedelta(days=1)
+                c.execute('UPDATE reminders SET last_triggered=?, next_trigger=? WHERE id=?',
+                         (now, next_t.isoformat(), reminder_id))
             elif reminder["trigger_type"] == "weekly":
-                next_trigger = datetime.fromisoformat(reminder["next_trigger"])
-                if next_trigger.tzinfo is None:
-                    next_trigger = tz.localize(next_trigger)
-                next_trigger += timedelta(weeks=1)
-                c.execute('UPDATE reminders SET last_triggered = ?, next_trigger = ? WHERE id = ?',
-                         (now, next_trigger.isoformat(), reminder_id))
+                next_t = datetime.fromisoformat(reminder["next_trigger"])
+                if next_t.tzinfo is None:
+                    next_t = tz.localize(next_t)
+                next_t += timedelta(weeks=1)
+                c.execute('UPDATE reminders SET last_triggered=?, next_trigger=? WHERE id=?',
+                         (now, next_t.isoformat(), reminder_id))
             else:
-                c.execute('UPDATE reminders SET is_active = 0, last_triggered = ? WHERE id = ?',
+                c.execute('UPDATE reminders SET is_active=0, last_triggered=? WHERE id=?',
                          (now, reminder_id))
     else:
-        c.execute('UPDATE reminders SET is_active = 0, last_triggered = ? WHERE id = ?',
+        c.execute('UPDATE reminders SET is_active=0, last_triggered=? WHERE id=?',
                  (now, reminder_id))
 
     conn.commit()
@@ -444,15 +597,11 @@ def mark_reminder_triggered(reminder_id: int, reschedule: bool = False):
 def get_user_reminders(guild_id: int, user_id: int) -> list:
     conn = _get_conn()
     c = conn.cursor()
-    c.execute('''
-        SELECT * FROM reminders
-        WHERE guild_id = ? AND user_id = ? AND is_active = 1
-        ORDER BY next_trigger ASC
-    ''', (guild_id, user_id))
+    c.execute('SELECT * FROM reminders WHERE guild_id=? AND user_id=? AND is_active=1 ORDER BY next_trigger',
+              (guild_id, user_id))
     rows = c.fetchall()
-    columns = [desc[0] for desc in c.description]
+    columns = [desc[0] for desc in c.description] if c.description else []
     conn.close()
-
     reminders = []
     for row in rows:
         r = dict(zip(columns, row))
@@ -465,13 +614,12 @@ def get_all_active_reminders(guild_id: int = None) -> list:
     conn = _get_conn()
     c = conn.cursor()
     if guild_id:
-        c.execute('SELECT * FROM reminders WHERE guild_id = ? AND is_active = 1 ORDER BY next_trigger', (guild_id,))
+        c.execute('SELECT * FROM reminders WHERE guild_id=? AND is_active=1 ORDER BY next_trigger', (guild_id,))
     else:
-        c.execute('SELECT * FROM reminders WHERE is_active = 1 ORDER BY next_trigger')
+        c.execute('SELECT * FROM reminders WHERE is_active=1 ORDER BY next_trigger')
     rows = c.fetchall()
-    columns = [desc[0] for desc in c.description]
+    columns = [desc[0] for desc in c.description] if c.description else []
     conn.close()
-
     reminders = []
     for row in rows:
         r = dict(zip(columns, row))
@@ -484,9 +632,9 @@ def delete_reminder(reminder_id: int, user_id: int = None) -> bool:
     conn = _get_conn()
     c = conn.cursor()
     if user_id:
-        c.execute('DELETE FROM reminders WHERE id = ? AND user_id = ?', (reminder_id, user_id))
+        c.execute('DELETE FROM reminders WHERE id=? AND user_id=?', (reminder_id, user_id))
     else:
-        c.execute('DELETE FROM reminders WHERE id = ?', (reminder_id,))
+        c.execute('DELETE FROM reminders WHERE id=?', (reminder_id,))
     deleted = c.rowcount > 0
     conn.commit()
     conn.close()
@@ -499,8 +647,8 @@ def cancel_reminder_by_message(guild_id: int, user_id: int, keyword: str) -> int
     conn = _get_conn()
     c = conn.cursor()
     c.execute('''
-        UPDATE reminders SET is_active = 0
-        WHERE guild_id = ? AND user_id = ? AND is_active = 1 AND message LIKE ?
+        UPDATE reminders SET is_active=0
+        WHERE guild_id=? AND user_id=? AND is_active=1 AND message LIKE ?
     ''', (guild_id, user_id, f"%{keyword}%"))
     count = c.rowcount
     conn.commit()
