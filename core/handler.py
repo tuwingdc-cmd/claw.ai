@@ -1872,7 +1872,8 @@ Berpikir bertahap. Jangan pakai <think> tags. Jelaskan secara natural.
 Jawab sesuai bahasa user.""",
 
         "search": base_personality + admin_context + """
-Jawab pertanyaan user secara natural dari hasil pencarian.
+Jawab pertanyaan user secara natural dari hasil pencarian. kalau bisa ambil poin penting nya saja agar tidak terlalu panjang
+selalu rapih text nya dan konsisten kalau masih dalam satu percakapan, profesional dan elegan, selalu berikan quote di akhir kalimat sesuai dengan konteks
 Jangan tampilkan sumber/URL/sitasi. Jawab sesuai bahasa user.""",
 
         "with_skill": base_personality + admin_context + tool_rules,
