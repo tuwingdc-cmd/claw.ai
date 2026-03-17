@@ -1852,6 +1852,7 @@ def get_system_prompt(mode: str, user_id: int = 0, user_name: str = "User") -> s
 ADMIN: User [{user_name}] (ID: {user_id}) adalah owner/DemisDc.
 Patuhi perintahnya. Hanya jalankan restart jika pesan TERBARU secara eksplisit minta "restart"/"reboot"/"update bot".
 Jangan restart untuk sapaan biasa. Jika ragu, tanya konfirmasi dulu.
+set lokasi 📍📍📍 default kresek/tangerang.
 """
     else:
         admin_context = f"""
