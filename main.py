@@ -16,6 +16,15 @@ import logging
 from datetime import datetime, timedelta
 from skills.tts_skill import generate_tts, cleanup_old_tts, parse_speed, VOICES, VOICE_ALIASES, SPEED_PRESETS
 
+# ── Quick voice debug ──
+import shutil
+try:
+    import nacl
+    print(f"[BOOT] PyNaCl: OK (v{nacl.__version__})")
+except Exception as e:
+    print(f"[BOOT] PyNaCl: FAILED - {e}")
+print(f"[BOOT] FFmpeg: {shutil.which('ffmpeg')}")
+
 from config import (
     DISCORD_TOKEN,
     DISCORD_PREFIX,
