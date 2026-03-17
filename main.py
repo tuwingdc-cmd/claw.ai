@@ -780,12 +780,13 @@ async def on_message(message: discord.Message):
             user_name=message.author.display_name
         )
 
-    response_text = result["text"]
+        response_text = result["text"]
     fallback_note = result.get("fallback_note")
     if fallback_note:
         response_text += f"\n\n-# {fallback_note}"
 
-        if len(response_text) > 2000:
+    # ── Send text response ──
+    if len(response_text) > 2000:
         chunks = _split_message(response_text)
         for chunk in chunks:
             await message.reply(chunk, mention_author=False)
@@ -802,13 +803,14 @@ async def on_message(message: discord.Message):
     ):
         await _auto_tts(message, response_text, voice_cfg)
 
+    # ── Delete mention message ──
     try:
         if bot.user in message.mentions:
             await message.delete()
     except (discord.Forbidden, discord.NotFound):
         pass
 
-    # Execute actions
+    # ── Execute actions ──
     for action in result.get("actions", []):
         try:
             action_type = action.get("type", "")
