@@ -176,6 +176,13 @@ DEFAULT_SETTINGS = {
     "auto_chat": False,
     "auto_detect": False,
     "enabled_channels": [],
+    "voice": {
+        "enabled": False,
+        "speed": "+0%",
+        "gender": "female",
+        "voice_name": "auto",
+        "pitch": "+0Hz",
+    },
 }
 
 
