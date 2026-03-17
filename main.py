@@ -14,6 +14,7 @@ import wavelink
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from skills.tts_skill import generate_tts, cleanup_old_tts, parse_speed, VOICES, VOICE_ALIASES, SPEED_PRESETS
 
 from config import (
     DISCORD_TOKEN,
@@ -784,12 +785,22 @@ async def on_message(message: discord.Message):
     if fallback_note:
         response_text += f"\n\n-# {fallback_note}"
 
-    if len(response_text) > 2000:
+        if len(response_text) > 2000:
         chunks = _split_message(response_text)
         for chunk in chunks:
             await message.reply(chunk, mention_author=False)
     else:
         await message.reply(response_text, mention_author=False)
+
+    # ── Auto TTS ──
+    voice_cfg = settings.get("voice", {})
+    if (
+        voice_cfg.get("enabled")
+        and message.author.voice
+        and message.author.voice.channel
+        and response_text.strip()
+    ):
+        await _auto_tts(message, response_text, voice_cfg)
 
     try:
         if bot.user in message.mentions:
@@ -816,6 +827,88 @@ async def on_message(message: discord.Message):
         except Exception as e:
             log.error(f"🔧 Action error [{action.get('type')}]: {e}")
 
+# ============================================================
+# AUTO TTS — Speak AI response in voice channel
+# ============================================================
+
+async def _auto_tts(message: discord.Message, text: str, voice_cfg: dict):
+    """Auto-generate TTS and play in voice channel"""
+    try:
+        tts_text = text[:3000] if len(text) > 3000 else text
+
+        result = await generate_tts(
+            text=tts_text,
+            voice=voice_cfg.get("voice_name") if voice_cfg.get("voice_name") != "auto" else None,
+            gender=voice_cfg.get("gender", "female"),
+            rate=voice_cfg.get("speed", "+0%"),
+            pitch=voice_cfg.get("pitch", "+0Hz"),
+        )
+
+        if not result["success"]:
+            log.warning(f"🔊 Auto-TTS failed: {result.get('error')}")
+            return
+
+        filepath = result["filepath"]
+        filename = result["filename"]
+
+        player: wavelink.Player = message.guild.voice_client
+        if not player:
+            try:
+                player = await message.author.voice.channel.connect(cls=wavelink.Player)
+                from music.player import MusicPlayer, set_player
+                set_player(message.guild.id, MusicPlayer(player))
+            except Exception as e:
+                log.warning(f"🔊 Cannot join voice: {e}")
+                try:
+                    discord_file = discord.File(filepath, filename="response.mp3")
+                    await message.channel.send(file=discord_file)
+                except:
+                    pass
+                _safe_delete(filepath)
+                return
+
+        render_url = os.getenv("RENDER_EXTERNAL_URL", "")
+        if not render_url:
+            log.warning("🔊 RENDER_EXTERNAL_URL not set")
+            _safe_delete(filepath)
+            return
+
+        tts_url = f"{render_url}/tts/{filename}"
+
+        try:
+            tracks = await wavelink.Playable.search(tts_url)
+            if tracks:
+                track = tracks[0] if not isinstance(tracks, wavelink.Playlist) else tracks.tracks[0]
+                await player.play(track)
+                log.info(f"🔊 Auto-TTS playing: {result['voice']} | {result['text_length']} chars")
+
+                async def _cleanup():
+                    await asyncio.sleep(60)
+                    _safe_delete(filepath)
+                    cleanup_old_tts(120)
+                asyncio.create_task(_cleanup())
+            else:
+                discord_file = discord.File(filepath, filename="response.mp3")
+                await message.channel.send(file=discord_file)
+                _safe_delete(filepath)
+        except Exception as e:
+            log.warning(f"🔊 Lavalink error: {e}")
+            try:
+                discord_file = discord.File(filepath, filename="response.mp3")
+                await message.channel.send(file=discord_file)
+            except:
+                pass
+            _safe_delete(filepath)
+    except Exception as e:
+        log.error(f"🔊 Auto-TTS error: {e}")
+
+
+def _safe_delete(filepath: str):
+    try:
+        if filepath and os.path.exists(filepath):
+            os.unlink(filepath)
+    except:
+        pass
 
 # ============================================================
 # HELPERS
@@ -884,6 +977,14 @@ async def help_cmd(ctx: commands.Context):
             f"`{p}calendar [bulan] [tahun]` — Tampilkan kalender\n"
             f"`{p}countdown <YYYY-MM-DD>` — Hitung mundur\n"
             f"`{p}weather [kota]` — Cek cuaca\n\n"
+            f"**Voice (Auto-TTS):**\n"
+            f"`{p}voice` — Status & settings\n"
+            f"`{p}voice on` / `off` — Toggle suara\n"
+            f"`{p}voice speed cepat` — Kecepatan bicara\n"
+            f"`{p}voice gender male` — Ganti gender\n"
+            f"`{p}voice set gadis` — Pilih voice\n"
+            f"`{p}voice test` — Test suara\n"
+            f"`{p}voice list` — Daftar voice\n\n"
             f"**Music:**\n"
             f"`{p}play <lagu>` — Play music\n"
             f"`{p}skip` / `{p}stop` / `{p}pause` / `{p}resume`\n"
@@ -1306,6 +1407,180 @@ async def cancel_reminder_cmd(ctx, reminder_id: int):
     else:
         await ctx.send(f"❌ Reminder #{reminder_id} tidak ditemukan.")
 
+# ============================================================
+# VOICE SETTINGS COMMANDS
+# ============================================================
+
+@bot.command(name="voice", aliases=["tts", "suara"])
+async def voice_cmd(ctx: commands.Context, action: str = None, *, value: str = None):
+    """Voice settings for auto-TTS"""
+    settings = get_settings(ctx.guild.id)
+    voice_cfg = settings.setdefault("voice", {
+        "enabled": False, "speed": "+0%",
+        "gender": "female", "voice_name": "auto", "pitch": "+0Hz",
+    })
+
+    if not action:
+        status = "🟢 ON" if voice_cfg.get("enabled") else "🔴 OFF"
+        speed = voice_cfg.get("speed", "+0%")
+        gender_icon = "♀️" if voice_cfg.get("gender") == "female" else "♂️"
+        voice_name = voice_cfg.get("voice_name", "auto")
+
+        speed_label = speed
+        for label, val in SPEED_PRESETS.items():
+            if val == speed:
+                speed_label = f"{label} ({speed})"
+                break
+
+        embed = discord.Embed(title="🔊 Voice Settings", color=discord.Color.blue())
+        embed.add_field(name="Status", value=status, inline=True)
+        embed.add_field(name="Kecepatan", value=speed_label, inline=True)
+        embed.add_field(name="Gender", value=f"{gender_icon} {voice_cfg.get('gender', 'female')}", inline=True)
+        embed.add_field(name="Voice", value=f"`{voice_name}`", inline=True)
+        embed.add_field(
+            name="Cara Pakai",
+            value=(
+                f"`{DISCORD_PREFIX}voice on` / `off` — Toggle\n"
+                f"`{DISCORD_PREFIX}voice speed cepat` — Kecepatan\n"
+                f"`{DISCORD_PREFIX}voice gender male` — Gender\n"
+                f"`{DISCORD_PREFIX}voice set gadis` — Pilih voice\n"
+                f"`{DISCORD_PREFIX}voice list` — Daftar voice\n"
+                f"`{DISCORD_PREFIX}voice test` — Test suara"
+            ),
+            inline=False
+        )
+        if voice_cfg.get("enabled"):
+            embed.set_footer(text="Bot otomatis bicara saat kamu di voice channel")
+        else:
+            embed.set_footer(text="Voice OFF — bot hanya kirim teks")
+        await ctx.send(embed=embed)
+        return
+
+    action = action.lower()
+
+    if action == "on":
+        voice_cfg["enabled"] = True
+        save_settings(ctx.guild.id)
+        await ctx.send("🔊 Voice **ON**! Bot akan bicara di voice channel.\nPastikan kamu sudah join VC.")
+
+    elif action == "off":
+        voice_cfg["enabled"] = False
+        save_settings(ctx.guild.id)
+        await ctx.send("🔇 Voice **OFF**. Bot hanya kirim teks.")
+
+    elif action in ("speed", "kecepatan", "spd"):
+        if not value:
+            await ctx.send(
+                f"🔊 Speed: `{voice_cfg.get('speed', '+0%')}`\n"
+                f"Pilihan: `lambat` `normal` `cepat` `fastest` `turbo`\n"
+                f"Atau custom: `+30%` atau `1.5`"
+            )
+            return
+        parsed = parse_speed(value)
+        voice_cfg["speed"] = parsed
+        save_settings(ctx.guild.id)
+        await ctx.send(f"🔊 Speed → **{value}** (`{parsed}`) saved! ✅")
+
+    elif action in ("gender", "suara"):
+        if not value:
+            await ctx.send(f"🔊 Gender: `{voice_cfg.get('gender')}`\nPilihan: `female` / `male`")
+            return
+        gender = "male" if value.lower() in ("male", "m", "laki", "cowok", "pria") else "female"
+        voice_cfg["gender"] = gender
+        save_settings(ctx.guild.id)
+        icon = "♂️" if gender == "male" else "♀️"
+        await ctx.send(f"🔊 Gender → {icon} **{gender}** saved! ✅")
+
+    elif action in ("set", "pilih"):
+        if not value:
+            await ctx.send(
+                f"🔊 Voice: `{voice_cfg.get('voice_name', 'auto')}`\n"
+                f"Pilihan: `auto` `gadis` `ardi` `jenny` `guy` `nanami` `sonia`\n"
+                f"Lihat semua: `{DISCORD_PREFIX}voice list`"
+            )
+            return
+        voice_cfg["voice_name"] = value.lower()
+        save_settings(ctx.guild.id)
+        await ctx.send(f"🔊 Voice → **{value}** saved! ✅")
+
+    elif action in ("pitch", "nada"):
+        if not value:
+            await ctx.send(f"🔊 Pitch: `{voice_cfg.get('pitch', '+0Hz')}`\nContoh: `+5Hz` `-10Hz`")
+            return
+        if not value.endswith("Hz"):
+            value = f"{value}Hz"
+        if not value.startswith(('+', '-')):
+            value = f"+{value}"
+        voice_cfg["pitch"] = value
+        save_settings(ctx.guild.id)
+        await ctx.send(f"🔊 Pitch → **{value}** saved! ✅")
+
+    elif action in ("list", "daftar", "voices"):
+        embed = discord.Embed(title="🔊 Daftar Voice", color=discord.Color.blue())
+        lang_names = {
+            "id": "🇮🇩 Indonesia", "en": "🇺🇸 English", "ja": "🇯🇵 Japanese",
+            "ko": "🇰🇷 Korean", "zh": "🇨🇳 Chinese", "es": "🇪🇸 Spanish",
+            "fr": "🇫🇷 French", "de": "🇩🇪 German", "ar": "🇸🇦 Arabic",
+        }
+        langs = {}
+        for key, vid in VOICES.items():
+            lc = key.split("-")[0]
+            if lc not in langs: langs[lc] = []
+            g = "♀️" if "female" in key else "♂️"
+            langs[lc].append(f"{g} `{vid}`")
+        for lc, vl in langs.items():
+            embed.add_field(name=lang_names.get(lc, lc), value="\n".join(vl), inline=True)
+        alias_text = "\n".join(f"`{k}` → {v}" for k, v in list(VOICE_ALIASES.items())[:6])
+        embed.add_field(name="⚡ Shortcut", value=alias_text, inline=False)
+        embed.set_footer(text=f"{DISCORD_PREFIX}voice set gadis | {DISCORD_PREFIX}voice set auto")
+        await ctx.send(embed=embed)
+
+    elif action in ("test", "coba"):
+        if not ctx.author.voice:
+            await ctx.send("❌ Join voice channel dulu!")
+            return
+        test_text = value or "Halo! Ini test suara bot. Apakah kamu bisa dengar?"
+        result = await generate_tts(
+            text=test_text,
+            voice=voice_cfg.get("voice_name") if voice_cfg.get("voice_name") != "auto" else None,
+            gender=voice_cfg.get("gender", "female"),
+            rate=voice_cfg.get("speed", "+0%"),
+            pitch=voice_cfg.get("pitch", "+0Hz"),
+        )
+        if not result["success"]:
+            await ctx.send(f"❌ TTS gagal: {result.get('error')}")
+            return
+        filepath = result["filepath"]
+        filename = result["filename"]
+        try:
+            player: wavelink.Player = ctx.guild.voice_client
+            if not player:
+                player = await ctx.author.voice.channel.connect(cls=wavelink.Player)
+                from music.player import MusicPlayer, set_player
+                set_player(ctx.guild.id, MusicPlayer(player))
+            render_url = os.getenv("RENDER_EXTERNAL_URL", "")
+            if render_url:
+                tts_url = f"{render_url}/tts/{filename}"
+                tracks = await wavelink.Playable.search(tts_url)
+                if tracks:
+                    track = tracks[0] if not isinstance(tracks, wavelink.Playlist) else tracks.tracks[0]
+                    await player.play(track)
+                    await ctx.send(f"🔊 *Test...*\n-# Voice: `{result['voice']}` | Speed: `{voice_cfg.get('speed')}`")
+                    async def _cl():
+                        await asyncio.sleep(30)
+                        _safe_delete(filepath)
+                    asyncio.create_task(_cl())
+                    return
+            discord_file = discord.File(filepath, filename="test.mp3")
+            await ctx.send(content=f"🔊 `{result['voice']}`", file=discord_file)
+            _safe_delete(filepath)
+        except Exception as e:
+            discord_file = discord.File(filepath, filename="test.mp3")
+            await ctx.send(file=discord_file)
+            _safe_delete(filepath)
+
+    else:
+        await ctx.send(f"❌ `{action}` tidak dikenal. Ketik `{DISCORD_PREFIX}voice` untuk bantuan.")
 
 # ============================================================
 # RUN — MUST BE LAST!
