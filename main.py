@@ -16,6 +16,61 @@ import logging
 from datetime import datetime, timedelta
 from skills.tts_skill import generate_tts, cleanup_old_tts, parse_speed, VOICES, VOICE_ALIASES, SPEED_PRESETS
 
+import sys
+import logging
+
+log = logging.getLogger(__name__)
+
+# ── Startup Verification (2026) ──
+def verify_voice_stack():
+    """Verify voice dependencies at startup"""
+    issues = []
+    
+    try:
+        import discord
+        log.info(f"discord.py: {discord.__version__}")
+    except ImportError as e:
+        issues.append(f"discord.py: {e}")
+    
+    try:
+        import nacl
+        log.info(f"PyNaCl: {nacl.__version__}")
+    except ImportError as e:
+        issues.append(f"PyNaCl: {e}")
+    
+    try:
+        from discord import opus
+        if opus.is_loaded():
+            log.info("Opus: loaded ✅")
+        else:
+            log.warning("Opus: not loaded (Wavelink should still work)")
+    except Exception as e:
+        log.warning(f"Opus check failed: {e}")
+    
+    try:
+        import wavelink
+        log.info(f"Wavelink: {wavelink.__version__}")
+    except ImportError as e:
+        issues.append(f"Wavelink: {e}")
+    
+    import shutil
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        log.info(f"FFmpeg: {ffmpeg}")
+    else:
+        issues.append("FFmpeg: not found")
+    
+    if issues:
+        log.error("Voice stack verification FAILED:")
+        for issue in issues:
+            log.error(f"  - {issue}")
+        sys.exit(1)
+    else:
+        log.info("Voice stack verification: OK ✅")
+
+# Call verification before bot initialization
+verify_voice_stack()
+
 # ── Quick voice debug ──
 import shutil
 try:
