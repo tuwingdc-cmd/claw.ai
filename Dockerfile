@@ -7,6 +7,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
+    libffi-dev \
+    libsodium-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (cache layer)
