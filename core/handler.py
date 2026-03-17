@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 from core.providers import ProviderFactory, AIResponse
 from core.database import (
     save_message, get_conversation, clear_conversation,
-    get_memory_stats, MAX_MEMORY_MESSAGES
+    get_memory_stats, MAX_MEMORY_MESSAGES,
+    get_user_location
 )
 from config import API_KEYS, FALLBACK_CHAINS, PROVIDERS
 
@@ -519,14 +520,16 @@ GET_WEATHER_TOOL = {
         "name": "get_weather",
         "description": (
             "Get current weather for a city. "
-            "Use when asked about weather, temperature, rain, humidity in a location."
+            "Use when asked about weather, temperature, rain, humidity in a location. "
+            "If user has a saved location and doesn't specify a city, use their saved location. "
+            "The user's saved location will be provided in _user_location field if available."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "city": {
                     "type": "string",
-                    "description": "City name, e.g. Jakarta, Tokyo, London, New York"
+                    "description": "City name. If not specified by user, check _user_location. e.g. Jakarta, Tokyo, London"
                 }
             },
             "required": ["city"]
@@ -541,14 +544,15 @@ GET_FORECAST_TOOL = {
         "description": (
             "Get weather forecast for the next few days. "
             "Use when asked about: tomorrow's weather, weekly forecast, "
-            "will it rain tomorrow, cuaca besok, ramalan cuaca."
+            "will it rain tomorrow, cuaca besok, ramalan cuaca. "
+            "If user has a saved location and doesn't specify a city, use their saved location."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "city": {
                     "type": "string",
-                    "description": "City name, e.g. Jakarta, Tokyo, London"
+                    "description": "City name. If not specified by user, check _user_location. e.g. Jakarta, Tokyo, London"
                 },
                 "days": {
                     "type": "integer",
@@ -1072,10 +1076,19 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             return f"Current time in {tz}: {result['full']}"
         return f"Error: {result.get('error', 'Unknown timezone')}"
 
-    # ── GET WEATHER ──
+        # ── GET WEATHER ──
     elif tool_name == "get_weather":
         from skills.weather_skill import get_weather
-        city = tool_args.get("city", "Jakarta")
+        city = tool_args.get("city", "")
+        
+        # Auto-use saved location if no city specified
+        if not city or city.lower() in ("", "unknown", "none"):
+            user_loc = tool_args.get("_user_location")
+            if user_loc:
+                city = user_loc
+                log.info(f"🌤️ Auto-using saved location: {city}")
+            else:
+                city = "Jakarta"  # Final fallback
         log.info(f"🌤️ Tool: get_weather({city})")
         result = await get_weather(city)
         if result["success"]:
@@ -1093,10 +1106,19 @@ async def execute_tool_call(tool_name: str, tool_args: dict) -> str:
             return response
         return f"Error: {result.get('error', 'Kota tidak ditemukan')}"
 
-    # ── GET FORECAST ──
+        # ── GET FORECAST ──
     elif tool_name == "get_forecast":
         from skills.weather_skill import get_forecast
-        city = tool_args.get("city", "Jakarta")
+        city = tool_args.get("city", "")
+        
+        # Auto-use saved location if no city specified
+        if not city or city.lower() in ("", "unknown", "none"):
+            user_loc = tool_args.get("_user_location")
+            if user_loc:
+                city = user_loc
+                log.info(f"🌤️ Auto-using saved location for forecast: {city}")
+            else:
+                city = "Jakarta"
         days = tool_args.get("days", 3)
         log.info(f"🌤️ Tool: get_forecast({city}, {days} days)")
         result = await get_forecast(city, days)
@@ -1723,12 +1745,15 @@ async def handle_with_tools(messages: list, prov_name: str, model: str,
             except (json.JSONDecodeError, TypeError):
                 fn_args = {"query": fn_args_str}
 
-            # ── Always inject user context into ALL tools ──
+                        # ── Always inject user context into ALL tools ──
             if settings:
                 fn_args["_user_id"] = settings.get("_user_id", 0)
                 fn_args["_user_name"] = settings.get("_user_name", "User")
                 fn_args["_guild_id"] = settings.get("guild_id", 0)
                 fn_args["_channel_id"] = settings.get("_channel_id", 0)
+                fn_args["_user_location"] = settings.get("_user_location")
+                fn_args["_user_lat"] = settings.get("_user_lat")
+                fn_args["_user_lon"] = settings.get("_user_lon")
 
             # Capture music action
             if fn_name == "play_music":
@@ -2111,7 +2136,11 @@ async def handle_message(content: str, settings: Dict, channel_id: int = 0,
         else:
             voice_ctx = " [not in voice channel]"
 
-        user_content = f"[{user_name}]{voice_ctx}: {content}"
+        location_ctx = ""
+        if settings.get("_user_location"):
+            location_ctx = f" [location: {settings['_user_location']}]"
+
+        user_content = f"[{user_name}]{voice_ctx}{location_ctx}: {content}"
         urls = re.findall(r'https?://[^\s<>"\']+', content)
         if urls:
             url_hint = f"\n\n[System hint: User shared {len(urls)} URL(s). Use fetch_url tool to read the content. URLs: {', '.join(urls)}]"
