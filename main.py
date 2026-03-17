@@ -165,40 +165,71 @@ async def geocode_location(location: str) -> tuple:
 # ============================================================
 
 async def execute_music_action(message: discord.Message, action: dict):
-    from music.player import MusicPlayer, get_player, set_player, remove_player
+    from music.player import (
+        MusicPlayer, get_player, set_player, remove_player
+    )
     from music.views import create_now_playing_embed, MusicControlView
 
     act = action.get("action", "play")
     query = action.get("query", "")
 
-    log.info(f"🎵 Executing music action: {act} | query: {query}")
+    log.info(f"🎵 execute_music_action: {act} | query: {query}")
 
     if act == "play":
         if not message.author.voice:
+            log.warning(
+                f"🎵 {message.author} not in voice channel"
+            )
+            await message.channel.send(
+                "❌ Join voice channel dulu ya!"
+            )
             return
 
         player: wavelink.Player = message.guild.voice_client
 
         if not player:
             try:
-                player = await message.author.voice.channel.connect(cls=wavelink.Player)
+                vc = message.author.voice.channel
+                log.info(f"🎵 Connecting to: {vc.name} ({vc.id})")
+                player = await vc.connect(cls=wavelink.Player)
+                log.info(f"🎵 Connected to: {vc.name} ✅")
                 music_player = MusicPlayer(player)
                 set_player(message.guild.id, music_player)
             except Exception as e:
                 log.error(f"🎵 Failed to join voice: {e}")
-                await message.channel.send(f"❌ Gagal join voice channel: {e}")
+                import traceback
+                traceback.print_exc()
+                await message.channel.send(
+                    f"❌ Gagal join voice: {e}"
+                )
                 return
         else:
+            log.info(
+                f"🎵 Already in voice: "
+                f"{player.channel.name if player.channel else '?'}"
+            )
             music_player = get_player(message.guild.id)
             if not music_player:
                 music_player = MusicPlayer(player)
                 set_player(message.guild.id, music_player)
 
         try:
+            log.info(f"🎵 Searching: {query}")
             tracks = await wavelink.Playable.search(query)
+
             if not tracks:
-                await message.channel.send(f"❌ Tidak menemukan: **{query}**")
+                log.warning(f"🎵 No results for: {query}")
+                await message.channel.send(
+                    f"❌ Tidak menemukan: **{query}**"
+                )
                 return
+
+            track_count = (
+                len(tracks.tracks)
+                if isinstance(tracks, wavelink.Playlist)
+                else len(tracks)
+            )
+            log.info(f"🎵 Found {track_count} tracks")
 
             if isinstance(tracks, wavelink.Playlist):
                 for t in tracks.tracks:
@@ -206,58 +237,99 @@ async def execute_music_action(message: discord.Message, action: dict):
                 await music_player.add_tracks(tracks.tracks)
                 if not player.playing:
                     await music_player.play_next()
-                embed = discord.Embed(title="📋 Playlist Added",
-                    description=f"**{tracks.name}**\n{len(tracks.tracks)} tracks", color=0x1DB954)
+                embed = discord.Embed(
+                    title="📋 Playlist Added",
+                    description=(
+                        f"**{tracks.name}**\n"
+                        f"{len(tracks.tracks)} tracks"
+                    ),
+                    color=0x1DB954
+                )
                 if tracks.artwork:
                     embed.set_thumbnail(url=tracks.artwork)
                 await message.channel.send(embed=embed)
             else:
                 track = tracks[0]
                 track.requester = message.author
+
                 if player.playing:
                     await music_player.add_track(track)
-                    embed = discord.Embed(title="➕ Added to Queue",
-                        description=f"**[{track.title}]({track.uri})**\n{track.author}", color=0x1DB954)
+                    embed = discord.Embed(
+                        title="➕ Added to Queue",
+                        description=(
+                            f"**[{track.title}]({track.uri})**\n"
+                            f"{track.author}"
+                        ),
+                        color=0x1DB954
+                    )
                     if track.artwork:
                         embed.set_thumbnail(url=track.artwork)
-                    embed.add_field(name="Duration", value=MusicPlayer._format_time(track.length), inline=True)
-                    embed.add_field(name="Position", value=f"#{len(music_player.queue)}", inline=True)
+                    embed.add_field(
+                        name="Duration",
+                        value=MusicPlayer._format_time(track.length),
+                        inline=True
+                    )
+                    embed.add_field(
+                        name="Position",
+                        value=f"#{len(music_player.queue)}",
+                        inline=True
+                    )
                     await message.channel.send(embed=embed)
                 else:
+                    log.info(f"🎵 Playing: {track.title}")
                     await player.play(track)
                     embed = create_now_playing_embed(track, player)
                     view = MusicControlView(player)
-                    np_msg = await message.channel.send(embed=embed, view=view)
+                    np_msg = await message.channel.send(
+                        embed=embed, view=view
+                    )
                     music_player.now_playing_message = np_msg
+
         except Exception as e:
             log.error(f"🎵 Play error: {e}")
-            await message.channel.send(f"❌ Error playing: {e}")
+            import traceback
+            traceback.print_exc()
+            await message.channel.send(f"❌ Error: {e}")
 
     elif act == "skip":
-        from music.player import get_player
         music_player = get_player(message.guild.id)
         if music_player and music_player.is_playing:
+            log.info("🎵 Skipping...")
             await music_player.skip()
+        else:
+            await message.channel.send("❌ Tidak ada yang diputar.")
 
     elif act == "stop":
-        from music.player import get_player, remove_player
         player = message.guild.voice_client
         if player:
             music_player = get_player(message.guild.id)
             if music_player:
                 await music_player.clear_queue()
+            log.info("🎵 Stopping and disconnecting")
             await player.disconnect()
             remove_player(message.guild.id)
+        else:
+            await message.channel.send(
+                "❌ Bot tidak di voice channel."
+            )
 
     elif act == "pause":
         player = message.guild.voice_client
         if player and player.playing:
             await player.pause(True)
+            log.info("🎵 Paused")
+        else:
+            await message.channel.send("❌ Tidak ada yang diputar.")
 
     elif act == "resume":
         player = message.guild.voice_client
         if player and player.paused:
             await player.pause(False)
+            log.info("🎵 Resumed")
+        else:
+            await message.channel.send(
+                "❌ Tidak dalam keadaan pause."
+            )
 
 
 # ============================================================
@@ -614,9 +686,121 @@ async def on_wavelink_track_start(payload: wavelink.TrackStartEventPayload):
 @bot.event
 async def on_wavelink_track_end(payload: wavelink.TrackEndEventPayload):
     from music.player import get_player
+
+    track_name = payload.track.title if payload.track else "Unknown"
+    log.info(f"🎵 Track ended: {track_name}")
+
     music_player = get_player(payload.player.guild.id)
     if music_player and music_player.auto_play:
-        await music_player.play_next()
+        try:
+            next_track = await music_player.play_next()
+            if next_track:
+                log.info(f"🎵 Auto-playing next: {next_track.title}")
+            else:
+                log.info(f"🎵 Queue empty after: {track_name}")
+                _start_idle_disconnect(payload.player)
+        except Exception as e:
+            log.error(f"🎵 play_next() error: {e}")
+            import traceback
+            traceback.print_exc()
+
+
+def _start_idle_disconnect(player: wavelink.Player):
+    """Auto-disconnect after 2 minutes idle"""
+    async def _idle_check():
+        await asyncio.sleep(120)
+        try:
+            if player and player.connected and not player.playing:
+                from music.player import remove_player
+                guild_id = player.guild.id
+                ch_name = player.channel.name if player.channel else "unknown"
+                log.info(
+                    f"🎵 Idle disconnect from '{ch_name}' "
+                    f"(2 min no activity)"
+                )
+                remove_player(guild_id)
+                await player.disconnect()
+        except Exception as e:
+            log.debug(f"Idle disconnect error: {e}")
+
+    asyncio.create_task(_idle_check())
+
+
+@bot.event
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState
+):
+    # ── Track bot's own voice state ──
+    if member.id == bot.user.id:
+        if before.channel and not after.channel:
+            log.warning(
+                f"🔊 Bot DISCONNECTED from '{before.channel.name}' "
+                f"in '{member.guild.name}'"
+            )
+            from music.player import get_player, remove_player
+            if get_player(member.guild.id):
+                log.info(
+                    f"🔊 Cleaning up player for guild "
+                    f"{member.guild.id}"
+                )
+                remove_player(member.guild.id)
+
+        elif not before.channel and after.channel:
+            log.info(
+                f"🔊 Bot JOINED '{after.channel.name}' "
+                f"in '{member.guild.name}'"
+            )
+
+        elif (
+            before.channel
+            and after.channel
+            and before.channel != after.channel
+        ):
+            log.info(
+                f"🔊 Bot MOVED: '{before.channel.name}' → "
+                f"'{after.channel.name}'"
+            )
+        return
+
+    # ── Auto-leave if bot is alone ──
+    if before.channel and not after.channel:
+        guild = before.channel.guild
+        voice_client = guild.voice_client
+
+        if voice_client and voice_client.channel == before.channel:
+            human_members = [
+                m for m in before.channel.members if not m.bot
+            ]
+
+            if len(human_members) == 0:
+                log.info(
+                    f"🔊 Bot alone in '{before.channel.name}', "
+                    f"auto-leave in 30s..."
+                )
+
+                async def _auto_leave():
+                    await asyncio.sleep(30)
+                    try:
+                        vc = guild.voice_client
+                        if vc and vc.channel:
+                            humans = [
+                                m for m in vc.channel.members
+                                if not m.bot
+                            ]
+                            if len(humans) == 0:
+                                from music.player import remove_player
+                                remove_player(guild.id)
+                                await vc.disconnect()
+                                log.info(
+                                    f"🔊 Auto-left "
+                                    f"'{vc.channel.name}' (empty)"
+                                )
+                    except Exception as e:
+                        log.warning(f"🔊 Auto-leave error: {e}")
+
+                asyncio.create_task(_auto_leave())
 
 
 # ============================================================
@@ -628,6 +812,25 @@ async def on_ready():
     log.info(f"Bot ready: {bot.user.name} ({bot.user.id})")
     log.info(f"Servers: {len(bot.guilds)}")
     log.info(f"Providers: {list_available_providers()}")
+        # ── Dependency Check ──
+    import shutil
+    try:
+        import nacl
+        log.info("✅ PyNaCl OK — voice encryption supported")
+    except ImportError:
+        log.error("❌ PyNaCl NOT installed — voice WILL NOT work!")
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        log.info(f"✅ FFmpeg OK: {ffmpeg_path}")
+    else:
+        log.warning("⚠️ FFmpeg not found")
+
+    try:
+        import wavelink as _wl
+        log.info(f"✅ Wavelink OK: v{_wl.__version__}")
+    except ImportError:
+        log.error("❌ Wavelink NOT installed")
 
     saved_guilds = SettingsManager.get_all_guilds()
     if USE_TURSO:
