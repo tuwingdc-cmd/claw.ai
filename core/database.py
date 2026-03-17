@@ -1,5 +1,5 @@
 """
-Persistent Storage - Settings + Conversation Memory
+Persistent Storage - Settings + Conversation Memory + Reminders + User Location
 Local SQLite (dev) ←→ Turso Cloud (production) via HTTP API
 """
 
@@ -20,14 +20,13 @@ USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
 
 
 # ============================================================
-# TURSO HTTP API WRAPPER  (drop-in sqlite3 replacement)
-# No Rust compiler needed — pure HTTP via httpx
+# TURSO HTTP API WRAPPER
 # ============================================================
 
 class TursoCursor:
     def __init__(self, conn):
         self._conn = conn
-        self._rows: list = []
+        self._rows = []
         self._description = None
         self._lastrowid = None
         self._rowcount = -1
@@ -48,7 +47,6 @@ class TursoCursor:
     def execute(self, sql, params=None):
         import httpx
 
-        # Convert Python params → Turso arg format
         args = []
         for p in (params or []):
             if p is None:
@@ -89,21 +87,18 @@ class TursoCursor:
 
         first = results[0]
 
-        # Check for SQL errors from Turso
         if first.get("type") == "error":
             err = first.get("error", {}).get("message", "Unknown Turso error")
             raise Exception(f"Turso SQL error: {err}")
 
         result = first.get("response", {}).get("result", {})
 
-        # Parse column descriptions
         cols = result.get("cols", [])
         if cols:
             self._description = [(c["name"],) + (None,) * 6 for c in cols]
         else:
             self._description = None
 
-        # Parse rows
         self._rows = []
         for row in result.get("rows", []):
             parsed = []
@@ -120,7 +115,6 @@ class TursoCursor:
                     parsed.append(str(cv))
             self._rows.append(tuple(parsed))
 
-        # Metadata
         lir = result.get("last_insert_rowid")
         self._lastrowid = int(lir) if lir is not None else None
         arc = result.get("affected_row_count")
@@ -155,10 +149,10 @@ class TursoConnection:
         return TursoCursor(self)
 
     def commit(self):
-        pass  # Turso auto-commits each statement
+        pass
 
     def close(self):
-        pass  # Stateless HTTP — nothing to close
+        pass
 
 
 # ============================================================
@@ -166,7 +160,6 @@ class TursoConnection:
 # ============================================================
 
 def _get_conn():
-    """Returns TursoConnection (cloud) or sqlite3.Connection (local)"""
     if USE_TURSO:
         return TursoConnection(TURSO_URL, TURSO_TOKEN)
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -654,3 +647,83 @@ def cancel_reminder_by_message(guild_id: int, user_id: int, keyword: str) -> int
     conn.commit()
     conn.close()
     return count
+
+
+# ============================================================
+# USER LOCATION STORAGE
+# ============================================================
+
+def init_user_locations_table():
+    """Create user locations table if not exists"""
+    conn = _get_conn()
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_locations (
+            user_id INTEGER PRIMARY KEY,
+            location TEXT NOT NULL,
+            latitude REAL,
+            longitude REAL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    log.info("User locations table initialized")
+
+
+def set_user_location(user_id: int, location: str, lat: float = None, lon: float = None) -> bool:
+    """Save or update user's default location"""
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO user_locations (user_id, location, latitude, longitude, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                location = excluded.location,
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                updated_at = CURRENT_TIMESTAMP
+        """, (user_id, location, lat, lon))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        log.error(f"Error saving user location: {e}")
+        return False
+
+
+def get_user_location(user_id: int) -> dict:
+    """Get user's saved location"""
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("SELECT location, latitude, longitude FROM user_locations WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            return {
+                "found": True,
+                "location": row[0],
+                "latitude": row[1],
+                "longitude": row[2],
+            }
+        return {"found": False}
+    except Exception as e:
+        log.error(f"Error getting user location: {e}")
+        return {"found": False}
+
+
+def delete_user_location(user_id: int) -> bool:
+    """Delete user's saved location"""
+    try:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("DELETE FROM user_locations WHERE user_id = ?", (user_id,))
+        deleted = c.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        log.error(f"Error deleting user location: {e}")
+        return False
