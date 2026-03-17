@@ -1,9 +1,14 @@
-__pycache__
+__pycache__/
 *.pyc
+*.pyo
 .env
-.git
+.env.*
+.git/
 .gitignore
 data/*.db
-/tmp
+/tmp/
 *.md
 LICENSE
+.vscode/
+.idea/
+node_modules/
