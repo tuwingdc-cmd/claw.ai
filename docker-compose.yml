@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: claw-ai
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PORT=3007
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "3007:3007"
+    volumes:
+      - bot-data:/app/data
+      - tts-temp:/tmp/tts
+
+volumes:
+  bot-data:
+  tts-temp:
