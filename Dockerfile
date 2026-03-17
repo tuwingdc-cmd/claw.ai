@@ -2,7 +2,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies (ADDED: ffmpeg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     git \
@@ -13,6 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Force install PyNaCl (jaminan)
+RUN pip install --no-cache-dir PyNaCl>=1.5.0 && \
+    python -c "import nacl; print('PyNaCl verified:', nacl.__version__)"
 
 COPY . .
 
