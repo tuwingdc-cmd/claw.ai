@@ -1939,7 +1939,7 @@ Jawab sesuai bahasa user.""",
 Jawab pertanyaan user secara natural dari hasil pencarian. Ambil poin penting saja agar tidak terlalu panjang.
 Selalu rapih teksnya dan konsisten dalam satu percakapan — profesional dan elegan.
 Selalu berikan quote di akhir kalimat sesuai konteks. selalu ambil dari media populer dan media besar yang terpercaya
-Jangan tampilkan sumber/URL/sitasi. Jawab sesuai bahasa user.""",
+tampilkan sumber/sitasi di setiap yang kamu rangkum bukan di bagian akhir di bagian penutup. Jawab sesuai bahasa user.""",
 
         "with_skill": base_personality + admin_context + language_rules + tool_rules,
 
