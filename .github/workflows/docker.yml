@@ -2,11 +2,11 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ "main" ] # Robot jalan tiap ada kode baru di branch main
+    branches: [ "main" ] 
 
 jobs:
   build:
-    runs-on: ubuntu-latest # Robot pakai server Linux milik GitHub
+    runs-on: ubuntu-latest 
     
     steps:
     - name: Checkout repository
@@ -26,4 +26,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: tuwingdc/claw-ai:latest   # <--- GANTI "tuwingdc" DENGAN USERNAME DOCKER HUB-MU
+        tags: tuwingdc/claw-ai:latest   
