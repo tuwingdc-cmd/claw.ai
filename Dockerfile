@@ -1,26 +1,26 @@
-# Core Discord Library
-discord.py>=2.4.0,<3.0.0
-PyNaCl>=1.5.0,<2.0.0
+FROM python:3.11-slim
 
-# Audio Streaming
-wavelink>=3.4.1,<4.0.0
+WORKDIR /app
 
-# HTTP Clients
-aiohttp>=3.9.0,<4.0.0
-httpx>=0.27.0,<1.0.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    git \
+    libffi-dev \
+    libsodium-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
-# Database & Storage
-libsql-client>=0.3.0,<1.0.0
-aiosqlite>=0.20.0
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Utilities
-python-dotenv>=1.0.0
-pytz>=2024.1
-pydantic>=2.0.0
+COPY . .
 
-# Search & TTS
-duckduckgo-search>=6.0.0
-edge-tts>=7.2.7
+RUN mkdir -p /tmp/tts /app/data
 
-# Web Server
-flask>=3.0.0
+EXPOSE 3007
+
+ENV PYTHONUNBUFFERED=1
+ENV PORT=3007
+
+CMD ["python3", "main.py"]
