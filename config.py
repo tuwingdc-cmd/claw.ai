@@ -770,6 +770,7 @@ PROVIDERS: Dict[str, Provider] = {
         rate_limit="1000 calls/month (trial key)",
         models=[
             # ── Chat + Tools ───────────────────────────────────────
+            Model("command-r-plus-08-2024"),
             Model("command-a-vision-07-2025",    "⚠️ Command A Vision 🔥👁️⭐", ["normal"],              256000, vision=True, tools=True),
             Model("command-a-reasoning-08-2025", "⚠️ Command A Reasoning 🧠⭐", ["normal", "reasoning"], 256000, tools=True),
             Model("command-r-plus-08-2024",      "⚠️ Command R+ 🔍⭐",          ["normal", "search"],    128000, tools=True),
