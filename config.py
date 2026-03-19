@@ -760,42 +760,42 @@ PROVIDERS: Dict[str, Provider] = {
         ]
     ),
 
-    # ==================== COHERE ====================
+        # ==================== COHERE ====================
     # ⚠️ 1000 REQ/MONTH FREE (Trial key, no credit card)
     # Docs: https://docs.cohere.com/v2/docs/models
     # Verified: curl api.cohere.com/v1/models — 20 models
     "cohere": Provider(
-    name="Cohere",
-    endpoint="https://api.cohere.ai/v2/chat",
-    rate_limit="1000 calls/month (trial key)",
-    models=[
-        # ── Chat + Tools ───────────────────────────────────────
-        Model("command-a-03-2025",           "⚠️ Command A 🔥⭐🔍",         ["normal", "search"],    256000, tools=True),
-        Model("command-a-vision-07-2025",    "⚠️ Command A Vision 👁️⭐",   ["normal"],              256000, vision=True, tools=True),
-        Model("command-a-reasoning-08-2025", "⚠️ Command A Reasoning 🧠⭐", ["normal", "reasoning"], 256000, tools=True),
-        Model("command-r-plus-08-2024",      "⚠️ Command R+ 🔍⭐",          ["normal", "search"],    128000, tools=True),
-        Model("command-r-08-2024",           "⚠️ Command R ⭐",             ["normal"],              128000, tools=True),
-        Model("command-r7b-12-2024",         "⚠️ Command R 7B ⭐",          ["normal"],              128000, tools=True),
-        Model("command-r7b-arabic-02-2025",  "⚠️ Command R 7B Arabic ⭐",   ["normal"],              128000, tools=True),
+        name="Cohere",
+        endpoint="https://api.cohere.ai/v2/chat",
+        rate_limit="1000 calls/month (trial key)",
+        models=[
+            # ── Chat + Tools ───────────────────────────────────────
+            Model("command-a-03-2025",           "⚠️ Command A 🔥⭐🔍",         ["normal", "search"],    256000, tools=True),
+            Model("command-a-vision-07-2025",    "⚠️ Command A Vision 👁️⭐",   ["normal"],              256000, vision=True, tools=True),
+            Model("command-a-reasoning-08-2025", "⚠️ Command A Reasoning 🧠⭐", ["normal", "reasoning"], 256000, tools=True),
+            Model("command-r-plus-08-2024",      "⚠️ Command R+ 🔍⭐",          ["normal", "search"],    128000, tools=True),
+            Model("command-r-08-2024",           "⚠️ Command R ⭐",             ["normal"],              128000, tools=True),
+            Model("command-r7b-12-2024",         "⚠️ Command R 7B ⭐",          ["normal"],              128000, tools=True),
+            Model("command-r7b-arabic-02-2025",  "⚠️ Command R 7B Arabic ⭐",   ["normal"],              128000, tools=True),
 
-        # ── Multilingual (Aya) ─────────────────────────────────
-        Model("c4ai-aya-vision-8b",    "⚠️ Aya Vision 8B 👁️", ["normal"], 8192,   vision=True),
-        Model("c4ai-aya-expanse-32b",  "⚠️ Aya Expanse 32B",   ["normal"], 128000),
-        Model("c4ai-aya-expanse-8b",   "⚠️ Aya Expanse 8B",    ["normal"], 8192),
+            # ── Multilingual (Aya) ─────────────────────────────────
+            Model("c4ai-aya-vision-8b",   "⚠️ Aya Vision 8B 👁️", ["normal"], 8192,   vision=True),
+            Model("c4ai-aya-expanse-32b", "⚠️ Aya Expanse 32B",   ["normal"], 128000),
+            Model("c4ai-aya-expanse-8b",  "⚠️ Aya Expanse 8B",    ["normal"], 8192),
 
-        # ── Embedding ──────────────────────────────────────────
-        Model("embed-v4.0",                         "⚠️ Embed V4 📊",                 ["normal"]),
-        Model("embed-english-v3.0",                 "⚠️ Embed EN V3 📊",              ["normal"]),
-        Model("embed-multilingual-v2.0",            "⚠️ Embed Multilingual V2 📊",    ["normal"]),
-        Model("embed-english-v3.0-image",           "⚠️ Embed EN V3 Image 📊",        ["normal"]),
-        Model("embed-multilingual-light-v3.0-image","⚠️ Embed Multi Light Image 📊",  ["normal"]),
+            # ── Embedding ──────────────────────────────────────────
+            Model("embed-v4.0",                          "⚠️ Embed V4 📊",                ["normal"]),
+            Model("embed-english-v3.0",                  "⚠️ Embed EN V3 📊",             ["normal"]),
+            Model("embed-multilingual-v2.0",             "⚠️ Embed Multilingual V2 📊",   ["normal"]),
+            Model("embed-english-v3.0-image",            "⚠️ Embed EN V3 Image 📊",       ["normal"]),
+            Model("embed-multilingual-light-v3.0-image", "⚠️ Embed Multi Light Image 📊", ["normal"]),
 
-        # ── Rerank ─────────────────────────────────────────────
-        Model("rerank-v4.0-pro",          "⚠️ Rerank V4 Pro 🔍",   ["normal"]),
-        Model("rerank-v4.0-fast",         "⚠️ Rerank V4 Fast 🔍",  ["normal"]),
-        Model("rerank-multilingual-v3.0", "⚠️ Rerank Multi V3 🔍", ["normal"]),
-    ]
-),
+            # ── Rerank ─────────────────────────────────────────────
+            Model("rerank-v4.0-pro",          "⚠️ Rerank V4 Pro 🔍",   ["normal"]),
+            Model("rerank-v4.0-fast",         "⚠️ Rerank V4 Fast 🔍",  ["normal"]),
+            Model("rerank-multilingual-v3.0", "⚠️ Rerank Multi V3 🔍", ["normal"]),
+        ]
+    ),
 
     # ==================== SILICONFLOW ====================
     # Mixed: Some free, most paid (very cheap pricing)
